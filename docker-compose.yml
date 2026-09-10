@@ -6,19 +6,21 @@ services:
       POSTGRES_USER: steward
       POSTGRES_PASSWORD: steward
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
-      - ads_pgdata:/var/lib/postgresql/data
+      - ads_stage2_pgdata:/var/lib/postgresql/data
 
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://steward:steward@db:5432/ai_data_steward
       CORS_ORIGINS: http://localhost:5173
+      AUTH_MODE: demo
+      CATALOG_PUBLISHER: mock
     ports:
       - "8000:8000"
     depends_on:
       - db
 
 volumes:
-  ads_pgdata:
+  ads_stage2_pgdata:

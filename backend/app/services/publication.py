@@ -1,48 +1,138 @@
-import hashlib, json
+import hashlib
+import json
 from datetime import datetime, timezone
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
-from .snapshot import build_asset_snapshot
-from .readiness import calculate_readiness
+from sqlalchemy.orm import Session
+
+from ..models import AssetPublication, AssetRelease, DataAsset, Organization, PublicationEvent, PublicationStatus
 from .dcat_mapper import map_snapshot_to_dcat
-from .publisher import MockCKANPublisher
-from ..models import AssetPublication, AssetRelease, Organization, PublicationEvent
+from .publisher import get_publisher
+from .readiness import calculate_readiness
+from .snapshot import build_asset_snapshot
 
-def now(): return datetime.now(timezone.utc)
-def event(db,asset_id,event_type,actor,from_status=None,to_status=None,comments=None,meta=None): db.add(PublicationEvent(asset_id=asset_id,event_type=event_type,performed_by=actor,from_status=from_status,to_status=to_status,comments=comments,event_metadata=meta))
-def getpub(db,asset):
-    if asset.publication: return asset.publication
-    p=AssetPublication(asset_id=asset.id,status='DRAFT'); db.add(p); db.flush(); return p
 
-def submit(db,asset,actor,comments=None):
-    p=getpub(db,asset); r=calculate_readiness(asset); p.validation_errors=r['missing']
-    if not r['ready_to_submit']: raise HTTPException(400,{"message":"Asset is not ready to submit","readiness":r})
-    if p.status not in {'DRAFT','NEEDS_UPDATE','REJECTED'}: raise HTTPException(400,f'Cannot submit from {p.status}')
-    old=p.status; p.status='IN_REVIEW'; p.submitted_by=actor; p.submitted_at=now(); event(db,asset.id,'SUBMITTED',actor,old,p.status,comments); db.commit()
+def now():
+    return datetime.now(timezone.utc)
 
-def approve(db,asset,actor,comments=None):
-    p=getpub(db,asset)
-    if p.status!='IN_REVIEW': raise HTTPException(400,'Asset is not in review')
-    if p.submitted_by==actor: raise HTTPException(400,'Submitter cannot approve own asset')
-    old=p.status; p.status='APPROVED'; p.approved_by=actor; p.approved_at=now()
-    v=db.scalar(select(func.coalesce(func.max(AssetRelease.version_number),0)).where(AssetRelease.asset_id==asset.id))+1
-    snap=build_asset_snapshot(asset); h=hashlib.sha256(json.dumps(snap,sort_keys=True,default=str).encode()).hexdigest()
-    db.add(AssetRelease(asset_id=asset.id,version_number=v,snapshot=snap,snapshot_hash=h,approved_by=actor,approved_at=p.approved_at))
-    event(db,asset.id,'APPROVED',actor,old,p.status,comments,{"version":v,"snapshot_hash":h}); db.commit()
 
-def reject(db,asset,actor,comments):
-    p=getpub(db,asset)
-    if p.status!='IN_REVIEW': raise HTTPException(400,'Asset is not in review')
-    old=p.status; p.status='REJECTED'; event(db,asset.id,'RETURNED_FOR_CHANGES',actor,old,p.status,comments); db.commit()
+def get_or_create_publication(db: Session, asset: DataAsset) -> AssetPublication:
+    publication = asset.publication
+    if not publication:
+        publication = AssetPublication(asset_id=asset.id, status=PublicationStatus.DRAFT.value)
+        db.add(publication)
+        db.flush()
+        asset.publication = publication
+    return publication
 
-def publish(db,asset,actor):
-    p=getpub(db,asset)
-    if p.status!='APPROVED': raise HTTPException(400,'Asset must be approved first')
-    rel=db.scalar(select(AssetRelease).where(AssetRelease.asset_id==asset.id).order_by(AssetRelease.version_number.desc()).limit(1))
-    org=db.get(Organization,asset.organization_id); dcat=map_snapshot_to_dcat(rel.snapshot,org.name); result=MockCKANPublisher().publish(rel.id,dcat)
-    old=p.status; p.status='PUBLISHED'; p.published_at=now(); rel.published_at=p.published_at; rel.ckan_dataset_id=result['ckan_dataset_id']; rel.ckan_name=result['ckan_name']; rel.publication_result={**result,'dcat_payload':dcat}; event(db,asset.id,'PUBLISHED',actor,old,p.status,meta={"release":rel.id}); db.commit()
 
-def mark_changed(db,asset,actor,reason):
-    p=getpub(db,asset)
-    if p.status=='PUBLISHED':
-        old=p.status; p.status='NEEDS_UPDATE'; event(db,asset.id,'UPDATED_AFTER_PUBLICATION',actor,old,p.status,meta={"reason":reason})
+def record_event(db, publication, asset_id, event_type, actor_id, from_status=None, to_status=None, comments=None, event_metadata=None):
+    db.add(PublicationEvent(
+        asset_id=asset_id,
+        publication_id=publication.id if publication else None,
+        event_type=event_type,
+        performed_by=actor_id,
+        from_status=from_status,
+        to_status=to_status,
+        comments=comments,
+        event_metadata=event_metadata,
+    ))
+
+
+def submit_for_review(db: Session, asset: DataAsset, actor_id: int, comments: str | None):
+    publication = get_or_create_publication(db, asset)
+    readiness = calculate_readiness(asset)
+    publication.last_validation_at = now()
+    publication.validation_errors = readiness["blocking"]
+    if not readiness["ready_to_submit"]:
+        raise HTTPException(status_code=400, detail={"message": "Asset is not ready to submit.", "readiness": readiness})
+
+    old = publication.status
+    if old not in {"DRAFT", "NEEDS_UPDATE", "REJECTED"}:
+        raise HTTPException(status_code=400, detail=f"Cannot submit from status {old}")
+    publication.status = "IN_REVIEW"
+    publication.submitted_by = actor_id
+    publication.submitted_at = now()
+    record_event(db, publication, asset.id, "SUBMITTED", actor_id, old, publication.status, comments)
+    db.commit()
+    return publication
+
+
+def approve(db: Session, asset: DataAsset, actor_id: int, comments: str | None):
+    publication = get_or_create_publication(db, asset)
+    if publication.status != "IN_REVIEW":
+        raise HTTPException(status_code=400, detail="Asset is not currently in review.")
+    if publication.submitted_by == actor_id:
+        raise HTTPException(status_code=400, detail="Submitter cannot approve their own asset.")
+
+    old = publication.status
+    publication.status = "APPROVED"
+    publication.approved_by = actor_id
+    publication.approved_at = now()
+
+    version_number = db.scalar(select(func.coalesce(func.max(AssetRelease.version_number), 0)).where(AssetRelease.asset_id == asset.id)) + 1
+    snapshot = build_asset_snapshot(asset)
+    serialized = json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8")
+    snapshot_hash = hashlib.sha256(serialized).hexdigest()
+    release = AssetRelease(
+        asset_id=asset.id,
+        version_number=version_number,
+        snapshot=snapshot,
+        snapshot_hash=snapshot_hash,
+        approved_by=actor_id,
+        approved_at=publication.approved_at,
+    )
+    db.add(release)
+    record_event(db, publication, asset.id, "APPROVED", actor_id, old, publication.status, comments, {"version_number": version_number, "snapshot_hash": snapshot_hash})
+    db.commit()
+    return publication
+
+
+def reject(db: Session, asset: DataAsset, actor_id: int, comments: str):
+    publication = get_or_create_publication(db, asset)
+    if publication.status != "IN_REVIEW":
+        raise HTTPException(status_code=400, detail="Asset is not currently in review.")
+    old = publication.status
+    publication.status = "REJECTED"
+    record_event(db, publication, asset.id, "RETURNED_FOR_CHANGES", actor_id, old, publication.status, comments)
+    db.commit()
+    return publication
+
+
+def publish(db: Session, asset: DataAsset, actor_id: int):
+    publication = get_or_create_publication(db, asset)
+    if publication.status != "APPROVED":
+        raise HTTPException(status_code=400, detail="Asset must be approved before publication.")
+
+    release = db.scalar(select(AssetRelease).where(AssetRelease.asset_id == asset.id).order_by(AssetRelease.version_number.desc()).limit(1))
+    if not release:
+        raise HTTPException(status_code=500, detail="Approved release snapshot not found.")
+    prior = db.scalar(select(AssetRelease).where(AssetRelease.asset_id == asset.id, AssetRelease.ckan_name.is_not(None)).order_by(AssetRelease.version_number.desc()).limit(1))
+    org = db.get(Organization, asset.organization_id)
+    dcat_payload = map_snapshot_to_dcat(release.snapshot, org.name)
+    result = get_publisher().publish(
+        release_id=release.id,
+        snapshot=release.snapshot,
+        dcat_payload=dcat_payload,
+        existing_ckan_name=prior.ckan_name if prior and prior.id != release.id else None,
+    )
+
+    old = publication.status
+    publication.status = "PUBLISHED"
+    publication.published_at = now()
+    release.published_at = publication.published_at
+    release.ckan_dataset_id = result["ckan_dataset_id"]
+    release.ckan_name = result["ckan_name"]
+    release.publication_result = {**result, "dcat_payload": dcat_payload}
+    record_event(db, publication, asset.id, "PUBLISHED", actor_id, old, publication.status, event_metadata={"release_id": release.id, "ckan_name": release.ckan_name})
+    db.commit()
+    return publication
+
+
+def mark_needs_update_if_published(db: Session, asset: DataAsset, actor_id: int, reason: str):
+    publication = get_or_create_publication(db, asset)
+    if publication.status == "PUBLISHED":
+        old = publication.status
+        publication.status = "NEEDS_UPDATE"
+        record_event(db, publication, asset.id, "UPDATED_AFTER_PUBLICATION", actor_id, old, publication.status, event_metadata={"reason": reason})
