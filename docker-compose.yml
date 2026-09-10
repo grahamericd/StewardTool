@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: steward
       POSTGRES_PASSWORD: steward
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - ads_stage2_pgdata:/var/lib/postgresql/data
 
