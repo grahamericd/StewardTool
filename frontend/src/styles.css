@@ -28,3 +28,20 @@
 .rule { display:flex; justify-content:space-between; align-items:center; gap:20px; border-bottom:1px solid #e7ecf2; padding:14px 0; }.rule span { display:block; color:#68758a; font-size:12px; margin-top:4px; }
 .result { padding:6px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap; }.result.fail { background:#fde7e7; color:#8b2e2e; }.result.pass { background:#e5f5ea; color:#1f7137; }
 @media (max-width: 1200px) { .metrics.six { grid-template-columns:repeat(3,1fr); } .quality-grid { grid-template-columns:repeat(2,1fr); } }
+
+
+/* Stage 3 quality orchestration */
+.engine-banner { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:14px 16px; border:1px solid #c9d9ea; background:#f2f7fc; border-radius:12px; margin:16px 0; }
+.engine-banner span { display:block; color:#68758a; font-size:12px; margin-top:4px; max-width:780px; }
+.config-box { border:1px solid #dce4ee; border-radius:10px; padding:12px 14px; margin:14px 0; }
+.config-box summary { font-weight:700; cursor:pointer; }
+.rule { display:flex; justify-content:space-between; gap:16px; align-items:center; border-bottom:1px solid #e5eaf0; padding:14px 0; }
+.rule span,.rule small { display:block; color:#68758a; font-size:12px; margin-top:4px; }
+.button-row.mini { margin-top:0; }
+.quality-issue { border:1px solid #dce4ee; border-left:5px solid #e0a128; border-radius:12px; padding:16px; margin:12px 0; }
+.quality-issue.severity-high { border-left-color:#b83c3c; }
+.sample-values { background:#f6f8fb; border-radius:8px; padding:10px 12px; margin:10px 0; }
+.sample-values span { display:block; color:#68758a; font-size:13px; margin-top:4px; }
+.guide-panel { border-top:5px solid #1769aa; }
+.decision-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+.decision-grid button { text-align:left; min-height:52px; }

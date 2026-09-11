@@ -231,6 +231,58 @@ class QualityResult(Base):
     external_run_id: Mapped[str | None] = mapped_column(String(255))
 
 
+class QualityEngineResource(Base):
+    __tablename__ = "quality_engine_resources"
+    __table_args__ = (UniqueConstraint("resource_id", "provider", name="uq_resource_quality_provider"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    resource_id: Mapped[int] = mapped_column(ForeignKey("data_resources.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), default="TESTGEN", nullable=False)
+    project_code: Mapped[str | None] = mapped_column(String(255))
+    connection_id: Mapped[str | None] = mapped_column(String(255))
+    table_group_id: Mapped[str | None] = mapped_column(String(255))
+    test_suite_id: Mapped[str | None] = mapped_column(String(255))
+    external_table_name: Mapped[str | None] = mapped_column(String(255))
+    sync_status: Mapped[str] = mapped_column(String(40), default="CONFIGURED", nullable=False)
+    last_profiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_external_run_id: Mapped[str | None] = mapped_column(String(255))
+    configuration: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class QualityIssue(Base):
+    __tablename__ = "quality_issues"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("data_assets.id", ondelete="CASCADE"), nullable=False)
+    resource_id: Mapped[int | None] = mapped_column(ForeignKey("data_resources.id", ondelete="SET NULL"))
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("quality_rules.id", ondelete="SET NULL"))
+    issue_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(20), default="MEDIUM", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="OPEN", nullable=False)
+    failed_count: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(80), default="TESTGEN", nullable=False)
+    external_run_id: Mapped[str | None] = mapped_column(String(255))
+    external_issue_id: Mapped[str | None] = mapped_column(String(255))
+    details: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class QualityDecision(Base):
+    __tablename__ = "quality_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("quality_issues.id", ondelete="CASCADE"), nullable=False)
+    decision_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AssetPublication(Base):
     __tablename__ = "asset_publications"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

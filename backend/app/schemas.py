@@ -92,3 +92,30 @@ class ReviewRequest(BaseModel):
 
 class RejectRequest(BaseModel):
     comments: str = Field(min_length=1)
+
+
+class QualityEngineLinkCreate(BaseModel):
+    resource_id: int
+    provider: str = "TESTGEN"
+    project_code: str | None = None
+    connection_id: str | None = None
+    table_group_id: str | None = None
+    test_suite_id: str | None = None
+    external_table_name: str | None = None
+
+
+class QualityAssessmentRequest(BaseModel):
+    resource_id: int
+
+
+class QualityRunRequest(BaseModel):
+    resource_id: int
+
+
+class QualityRuleStatusUpdate(BaseModel):
+    status: str
+
+
+class QualityDecisionCreate(BaseModel):
+    decision_type: str
+    notes: str | None = None

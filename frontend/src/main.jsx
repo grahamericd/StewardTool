@@ -15,6 +15,8 @@ function App() {
   const [systems, setSystems] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [selectedAssetId, setSelectedAssetId] = useState(null);
+  const [assetTab, setAssetTab] = useState("Overview");
+  const [selectedQualityIssueId, setSelectedQualityIssueId] = useState(null);
   const [message, setMessage] = useState("");
   const userEmail = USERS[userLabel];
 
@@ -36,7 +38,7 @@ function App() {
   return <div className="app">
     <aside>
       <div className="brand">AI Data Steward</div>
-      <div className="tagline">Discover → Describe → Govern → Measure → Publish</div>
+      <div className="tagline">Discover → Describe → Govern → Measure → Resolve → Publish</div>
       <nav>{NAV.map(n => <button key={n} onClick={() => setPage(n)} className={page===n?"active":""}>{n}</button>)}</nav>
       <div className="aside-note"><b>Hidden standards</b><p>Users answer ordinary business questions. AI Data Steward produces standards-based metadata behind the scenes.</p></div>
     </aside>
@@ -48,8 +50,18 @@ function App() {
       {message && <div className="message">{message}</div>}
       {page === "My Organization" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
       {page === "Discover Data" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Data Asset 360")}} />}
-      {page === "Stewardship Inbox" && <Inbox tasks={tasks} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
-      {page === "Data Asset 360" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} doAction={doAction} />}
+      {page === "Stewardship Inbox" && <Inbox tasks={tasks} onGuide={task=>{
+        setSelectedAssetId(task.asset_id);
+        if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+          setAssetTab("Data Quality");
+          setSelectedQualityIssueId(Number(task.source_reference));
+        } else {
+          setAssetTab("Governance");
+          setSelectedQualityIssueId(null);
+        }
+        setPage("Data Asset 360");
+      }} />}
+      {page === "Data Asset 360" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} />}
       {page === "Review Queue" && <ReviewQueue assets={assets} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
       {page === "Publication History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
     </main>
@@ -76,7 +88,7 @@ function Dashboard({dashboard, assets, onOpen}) {
   </>;
 }
 
-function Inbox({tasks, onOpen}) {
+function Inbox({tasks, onGuide}) {
   const rank = {HIGH:0, MEDIUM:1, LOW:2};
   const sorted = [...tasks].sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9));
   return <>
@@ -86,7 +98,7 @@ function Inbox({tasks, onOpen}) {
     {sorted.map(t=><div className={`task task-${t.priority.toLowerCase()}`} key={t.id}>
       <div className="task-head"><div><div className="eyebrow">{t.governance_domain} · {t.asset_name}</div><h3>{t.title}</h3></div><span className="priority">{t.priority}</span></div>
       <div className="two-col compact"><div><b>Why this matters</b><p>{t.why_it_matters}</p></div><div><b>Recommended next step</b><p>{t.recommended_action}</p></div></div>
-      <button className="primary" onClick={()=>onOpen(t.asset_id)}>Guide me</button>
+      <button className="primary" onClick={()=>onGuide(t)}>Guide me</button>
     </div>)}
   </>;
 }
@@ -104,8 +116,8 @@ function Discover({systems, userEmail, onDone}) {
   </>;
 }
 
-function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction}) {
-  const [tab,setTab]=useState("Overview"), [quality,setQuality]=useState(null), [metaKey,setMetaKey]=useState("theme"), [metaValue,setMetaValue]=useState("Professional Licensing"), [gov,setGov]=useState({});
+function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId}) {
+  const [quality,setQuality]=useState(null), [metaKey,setMetaKey]=useState("theme"), [metaValue,setMetaValue]=useState("Professional Licensing"), [gov,setGov]=useState({});
   useEffect(()=>{if(asset){setGov({business_owner:asset.asset.business_owner||"",data_steward:asset.asset.data_steward||"",classification:asset.asset.classification||"",retention_requirement:asset.asset.retention_requirement||"",retention_authority:asset.asset.retention_authority||""});api(`/assets/${asset.asset.asset_id}/quality`,userEmail).then(setQuality)}},[asset?.asset?.asset_id,userEmail]);
   if(!asset)return <p>No data assets yet.</p>; const a=asset.asset;
   return <><div className="title-row"><div><h1>Information Details</h1><p className="lead">One place to understand what this information means, where it lives, how it is governed, and whether it can be trusted.</p></div><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select></div>
@@ -114,15 +126,61 @@ function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAss
     {tab==="Overview"&&<div className="two-col"><section className="panel"><h2>Governance readiness</h2>{asset.readiness.checks.map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div></div>)}</section><section className="panel"><h2>Where this information lives</h2>{asset.resources.map(r=><div className="resource" key={r.resource_id}><b>{r.name}</b><span>{friendlyType(r.resource_type)} · {r.structure_type}</span><span>{r.system||"No system"}{r.is_authoritative?" · Authoritative source":""}</span></div>)}</section></div>}
     {tab==="Metadata & Tags"&&<section className="panel"><div className="eyebrow">Plain language → standards behind the scenes</div><h2>Help people understand and find this information</h2><p className="muted">The user never sees DCAT field names. These answers are mapped to standards when published.</p><label>{metaKey==="theme"?"What business area does this information relate to?":metaKey==="keyword"?"What words would someone search for?":metaKey==="update_frequency"?"How often is this information updated?":"Who can answer questions about this information?"}</label><select value={metaKey} onChange={e=>setMetaKey(e.target.value)}><option value="theme">Business area</option><option value="keyword">Search terms</option><option value="update_frequency">Update frequency</option><option value="contact">Contact point</option></select><input value={metaValue} onChange={e=>setMetaValue(e.target.value)}/><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/metadata`,userEmail,{method:"PUT",body:JSON.stringify({metadata_key:metaKey,metadata_value:metaKey==="keyword"?metaValue.split(",").map(x=>x.trim()).filter(Boolean):metaKey==="contact"?{name:metaValue,email:"contact@example.gov"}:metaValue})}),"Metadata saved and readiness recalculated.")}>Save metadata</button></section>}
     {tab==="Governance"&&<section className="panel"><h2>Govern this information</h2><div className="form-grid"><label>Business owner<input value={gov.business_owner||""} onChange={e=>setGov({...gov,business_owner:e.target.value})}/></label><label>Data steward<input value={gov.data_steward||""} onChange={e=>setGov({...gov,data_steward:e.target.value})}/></label><label>Classification<select value={gov.classification||""} onChange={e=>setGov({...gov,classification:e.target.value})}><option value="">Needs review</option><option>Public</option><option>Internal</option><option>Sensitive</option><option>Restricted</option><option>Needs Expert Review</option></select></label><label>Retention requirement<input value={gov.retention_requirement||""} onChange={e=>setGov({...gov,retention_requirement:e.target.value})} placeholder="e.g., 5 years after closure"/></label><label className="wide">Retention authority<input value={gov.retention_authority||""} onChange={e=>setGov({...gov,retention_authority:e.target.value})} placeholder="Records schedule / policy source"/></label></div><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(gov)}),"Governance information saved.")}>Save governance decisions</button></section>}
-    {tab==="Data Quality"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
+    {tab==="Data Quality"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
     {tab==="Publication"&&<PublicationPanel asset={asset} userEmail={userEmail} doAction={doAction}/>} 
   </>;
 }
 
-function QualityPanel({quality,asset,userEmail,doAction}) {
+function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,setSelectedQualityIssueId}) {
   const q=quality?.profiles?.[0];
-  return <><section className="panel"><div className="eyebrow">Can we trust it?</div><h2>Data Quality</h2>{q?<><div className="quality-score"><strong>{q.overall_score}%</strong><span>Overall quality</span></div><div className="quality-grid"><Metric label="Completeness" value={`${q.completeness_score}%`}/><Metric label="Validity" value={`${q.validity_score}%`}/><Metric label="Uniqueness" value={`${q.uniqueness_score}%`}/><Metric label="Consistency" value={`${q.consistency_score}%`}/><Metric label="Timeliness" value={`${q.timeliness_score}%`}/></div></>:<p>No quality assessment has been recorded.</p>}</section>
-  <section className="panel"><h2>Quality expectations</h2><p className="muted">Stewards see the rule in business language. The technical rule definition stays underneath.</p>{quality?.rules?.map(r=><div className="rule" key={r.id}><div><b>{r.plain_language_rule}</b><span>{r.rule_type} · {r.status}</span></div>{r.latest_result&&<div className={`result ${r.latest_result.result_status.toLowerCase()}`}>{r.latest_result.result_status} · {r.latest_result.failed_count||0} failed</div>}</div>)}</section></>;
+  const structured=asset.resources.filter(r=>r.structure_type==="STRUCTURED");
+  const [resourceId,setResourceId]=useState(structured[0]?.resource_id||"");
+  const [projectCode,setProjectCode]=useState("");
+  const [tableGroupId,setTableGroupId]=useState("");
+  const [testSuiteId,setTestSuiteId]=useState("");
+  const [decisionIssue,setDecisionIssue]=useState(null);
+  const [notes,setNotes]=useState("");
+  const link=quality?.links?.find(x=>x.resource_id===Number(resourceId));
+  const openIssues=(quality?.issues||[]).filter(i=>i.status!=="RESOLVED");
+
+  useEffect(()=>{
+    if(!selectedQualityIssueId || !quality?.issues?.length) return;
+    const issue=quality.issues.find(i=>i.id===Number(selectedQualityIssueId));
+    if(issue){
+      setDecisionIssue(issue);
+      setNotes("");
+      window.setTimeout(()=>{
+        document.getElementById("guided-investigation")?.scrollIntoView({behavior:"smooth",block:"start"});
+      },100);
+    }
+  },[selectedQualityIssueId,quality?.issues]);
+
+  async function refreshAction(fn,msg){ await doAction(fn,msg); }
+
+  return <>
+    <section className="panel">
+      <div className="eyebrow">Quality engine · DataKitchen TestGen</div>
+      <h2>Assess Data Quality</h2>
+      <p className="muted">AI Data Steward remains the steward experience. TestGen performs profiling and test execution underneath it.</p>
+      <div className="engine-banner"><div><b>{quality?.engine_mode==="real"?"Connected integration mode":"Demo integration mode"}</b><span>{quality?.engine_mode==="real"?"Calls your installed TestGen REST API":"Uses a deterministic TestGen-shaped simulator so you can validate the full workflow before connecting TestGen."}</span></div><Status value={link?.sync_status||"NOT LINKED"}/></div>
+      <label>Structured resource to assess</label>
+      <select value={resourceId} onChange={e=>setResourceId(e.target.value)}>{structured.map(r=><option key={r.resource_id} value={r.resource_id}>{r.name} · {r.system||"No system"}</option>)}</select>
+      {structured.length===0&&<div className="education strong"><b>No structured resource is available.</b><p>Quality profiling applies to structured resources. Unstructured PDFs and document libraries remain governed through metadata, classification, retention, and other stewardship workflows.</p></div>}
+      {quality?.engine_mode==="real"&&<details className="config-box"><summary>TestGen connection mapping</summary><label>Project code<input value={projectCode} onChange={e=>setProjectCode(e.target.value)}/></label><label>Table group ID<input value={tableGroupId} onChange={e=>setTableGroupId(e.target.value)}/></label><label>Test suite ID<input value={testSuiteId} onChange={e=>setTestSuiteId(e.target.value)}/></label><button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/link`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId),project_code:projectCode,table_group_id:tableGroupId,test_suite_id:testSuiteId,external_table_name:structured.find(r=>r.resource_id===Number(resourceId))?.name})}),"TestGen mapping saved.")}>Save TestGen mapping</button></details>}
+      <div className="button-row"><button className="primary" disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/assess`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Data quality assessment completed. Review the findings and suggested expectations below.")}>Assess Data Quality</button><button disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/run`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Approved quality checks ran. Any failures were converted into stewardship work.")}>Run Approved Checks</button></div>
+    </section>
+
+    <section className="panel">
+      <div className="eyebrow">Can we trust it?</div><h2>Quality Health</h2>
+      {q?<><div className="quality-score"><strong>{q.overall_score}%</strong><span>Overall quality · {q.source}</span></div><div className="quality-grid"><Metric label="Completeness" value={q.completeness_score!=null?`${q.completeness_score}%`:"—"}/><Metric label="Validity" value={q.validity_score!=null?`${q.validity_score}%`:"—"}/><Metric label="Uniqueness" value={q.uniqueness_score!=null?`${q.uniqueness_score}%`:"—"}/><Metric label="Consistency" value={q.consistency_score!=null?`${q.consistency_score}%`:"—"}/><Metric label="Timeliness" value={q.timeliness_score!=null?`${q.timeliness_score}%`:"—"}/></div></>:<p>No quality assessment has been recorded.</p>}
+    </section>
+
+    <section className="panel"><h2>Suggested quality expectations</h2><p className="muted">TestGen discovers patterns and candidate checks. The steward decides which expectations should become governed rules.</p>{quality?.rules?.length?quality.rules.map(r=><div className="rule" key={r.id}><div><b>{r.plain_language_rule}</b><span>{friendlyType(r.rule_type)} · {r.status}</span>{r.latest_result&&<small>{r.latest_result.failed_count||0} failed in the latest run</small>}</div><div className="button-row mini">{r.status==="PROPOSED"&&<><button className="primary" onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"APPROVED"})}),"Quality expectation approved.")}>Approve</button><button onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"REJECTED"})}),"Quality expectation rejected.")}>Reject</button></>}</div></div>):<p>Run an assessment to generate suggested expectations.</p>}</section>
+
+    <section className="panel"><h2>Quality issues requiring a stewardship decision</h2><p className="muted">Technical findings become understandable human work. A failed check is not automatically treated as bad data.</p>{openIssues.length===0&&<div className="empty">No unresolved quality issues.</div>}{openIssues.map(i=><div className={`quality-issue severity-${i.severity.toLowerCase()}`} key={i.id}><div className="task-head"><div><div className="eyebrow">{i.source} · {i.issue_type.replaceAll("_"," ")}</div><h3>{i.title}</h3></div><span className="priority">{i.severity}</span></div><p>{i.description}</p>{i.failed_count!=null&&<p><b>{i.failed_count.toLocaleString()}</b> affected records</p>}{i.details?.sample_values&&<div className="sample-values"><b>Example values</b><span>{i.details.sample_values.map(v=>v===null?"(missing)":String(v)).join(" · ")}</span></div>}<button className="primary" onClick={()=>{setSelectedQualityIssueId(i.id);setDecisionIssue(i);setNotes("");window.setTimeout(()=>document.getElementById("guided-investigation")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}}>Guide Me</button></div>)}</section>
+
+    {decisionIssue&&<section id="guided-investigation" className="panel guide-panel"><div className="eyebrow">Guided investigation</div><h2>{decisionIssue.title}</h2><p><b>Step 1 — Understand what happened.</b> Review the evidence above. A failed check means the data did not meet an approved expectation; it does not by itself tell us why.</p><p><b>Step 2 — Make a stewardship decision.</b> Choose the explanation that best matches what you know. If you cannot determine it, escalate instead of guessing.</p><label>Notes / evidence</label><textarea rows="3" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="What did you learn? Who did you confirm this with?"/><div className="decision-grid">{[["BAD_DATA","The data is incorrect"],["VALID_EXCEPTION","This is a valid exception"],["EXPECTATION_NEEDS_CHANGE","The quality expectation needs to change"],["EXPERT_REVIEW","I need expert review"]].map(([value,label])=><button key={value} onClick={()=>refreshAction(()=>api(`/quality/issues/${decisionIssue.id}/decision`,userEmail,{method:"POST",body:JSON.stringify({decision_type:value,notes})}),`Decision recorded: ${label}.`).then(()=>{setDecisionIssue(null);setSelectedQualityIssueId(null)})}>{label}</button>)}</div></section>}
+  </>;
 }
 
 function PublicationPanel({asset,userEmail,doAction}) {

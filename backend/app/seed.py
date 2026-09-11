@@ -19,7 +19,7 @@ DEMO_USERS = [
 def seed(db: Session):
     org = db.scalar(select(Organization).where(Organization.code == "DEMO"))
     if not org:
-        org = Organization(code="DEMO", name="Department of Professional Regulation", description="Stage 2 demonstration organization")
+        org = Organization(code="DEMO", name="Department of Professional Regulation", description="Stage 3 demonstration organization")
         db.add(org); db.flush()
 
     users = {}
@@ -92,7 +92,7 @@ def seed(db: Session):
             asset_id=application.id, resource_id=table.id, overall_score=91.4,
             completeness_score=98.2, validity_score=93.1, uniqueness_score=99.8,
             consistency_score=88.4, timeliness_score=77.5, row_count=125440,
-            source="DEMO",
+            source="TESTGEN_BASELINE",
         )
         db.add(profile)
         rule = QualityRule(
@@ -102,7 +102,7 @@ def seed(db: Session):
             created_by=users["steward@demo.gov"].id,
         )
         db.add(rule); db.flush()
-        db.add(QualityResult(rule_id=rule.id, result_status="FAIL", evaluated_count=125440, failed_count=248, score=99.8, details={"message": "248 records are missing Application ID."}, source="DEMO"))
+        db.add(QualityResult(rule_id=rule.id, result_status="FAIL", evaluated_count=125440, failed_count=248, score=99.8, details={"message": "248 records are missing Application ID."}, source="TESTGEN_BASELINE"))
 
     db.flush()
     sync_tasks(db, application, users["steward@demo.gov"].id)

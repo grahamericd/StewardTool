@@ -5,19 +5,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..auth import current_context, require_roles
+from ..config import settings
 from ..db import get_db
 from ..models import (
     AssetMetadata, AssetPublication, AssetRelease, AssetResource, CatalogSystem, DataAsset, DataResource,
-    PublicationEvent, QualityProfile, QualityResult, QualityRule, StewardshipTask,
+    PublicationEvent, QualityDecision, QualityEngineResource, QualityIssue, QualityProfile, QualityResult, QualityRule, StewardshipTask,
 )
 from ..schemas import (
     AssetCreate, AssetGovernanceUpdate, MetadataUpsert, QualityProfileCreate, QualityResultCreate,
     QualityRuleCreate, RejectRequest, ResourceCreate, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
+    QualityEngineLinkCreate, QualityAssessmentRequest, QualityRunRequest, QualityRuleStatusUpdate, QualityDecisionCreate,
 )
 from ..services.publication import approve, mark_needs_update_if_published, publish, reject, submit_for_review
 from ..services.readiness import calculate_readiness
 from ..services.snapshot import build_asset_snapshot
 from ..services.task_service import sync_tasks
+from ..services.quality_orchestrator import assess_resource, decide_issue, ensure_link, run_tests
 
 router = APIRouter()
 
@@ -165,7 +168,7 @@ def list_tasks(ctx=Depends(current_context), db: Session = Depends(get_db)):
     db.commit()
     tasks = db.scalars(select(StewardshipTask).where(StewardshipTask.organization_id == ctx["organization_id"], StewardshipTask.status == "OPEN").order_by(StewardshipTask.priority, StewardshipTask.created_at)).all()
     names = {a.id: a.name for a in assets}
-    return [{"id": t.id, "asset_id": t.asset_id, "asset_name": names.get(t.asset_id), "task_type": t.task_type, "governance_domain": t.governance_domain, "title": t.title, "why_it_matters": t.why_it_matters, "recommended_action": t.recommended_action, "priority": t.priority, "status": t.status, "source_type": t.source_type} for t in tasks]
+    return [{"id": t.id, "asset_id": t.asset_id, "asset_name": names.get(t.asset_id), "task_type": t.task_type, "governance_domain": t.governance_domain, "title": t.title, "why_it_matters": t.why_it_matters, "recommended_action": t.recommended_action, "priority": t.priority, "status": t.status, "source_type": t.source_type, "source_reference": t.source_reference} for t in tasks]
 
 
 @router.post("/tasks/{task_id}/complete")
@@ -194,7 +197,9 @@ def quality(asset_id: int, ctx=Depends(current_context), db: Session = Depends(g
     for rule in rules:
         latest = db.scalar(select(QualityResult).where(QualityResult.rule_id == rule.id).order_by(QualityResult.evaluated_at.desc()).limit(1))
         result.append({"id": rule.id, "rule_name": rule.rule_name, "rule_type": rule.rule_type, "plain_language_rule": rule.plain_language_rule, "status": rule.status, "rule_definition": rule.rule_definition, "latest_result": None if not latest else {"result_status": latest.result_status, "evaluated_count": latest.evaluated_count, "failed_count": latest.failed_count, "score": latest.score, "details": latest.details, "evaluated_at": latest.evaluated_at}})
-    return {"profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source} for p in profiles], "rules": result}
+    links = db.scalars(select(QualityEngineResource).where(QualityEngineResource.organization_id == ctx["organization_id"], QualityEngineResource.resource_id.in_([x.resource_id for x in asset.resources] or [-1]))).all()
+    issues = db.scalars(select(QualityIssue).where(QualityIssue.asset_id == asset.id).order_by(QualityIssue.created_at.desc())).all()
+    return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": i.details, "created_at": i.created_at} for i in issues]}
 
 
 @router.post("/assets/{asset_id}/quality/rules")
@@ -214,6 +219,63 @@ def add_quality_result(rule_id: int, payload: QualityResultCreate, ctx=Depends(r
         if not existing:
             db.add(StewardshipTask(organization_id=asset.organization_id, asset_id=asset.id, task_type="quality_failure", governance_domain="QUALITY", title=f"Investigate quality failure: {rule.rule_name}", why_it_matters=f"{payload.failed_count} records failed an approved quality expectation.", recommended_action="Review a sample of failures and determine whether the data, the rule, or the source process changed.", priority="HIGH", source_type="QUALITY_RULE", source_reference=str(rule.id)))
     db.commit(); db.refresh(result); return result
+
+
+@router.get("/quality/engine/status")
+def quality_engine_status(ctx=Depends(current_context)):
+    return {
+        "provider": "TESTGEN",
+        "mode": settings.testgen_mode,
+        "configured": settings.testgen_mode != "real" or bool(settings.testgen_base_url),
+        "base_url": settings.testgen_base_url if settings.testgen_mode == "real" else None,
+        "message": "Mock TestGen is ready for end-to-end workflow testing." if settings.testgen_mode != "real" else "Real TestGen REST integration is enabled.",
+    }
+
+
+@router.post("/assets/{asset_id}/quality/link")
+def link_quality_engine(asset_id: int, payload: QualityEngineLinkCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    if not any(link.resource_id == payload.resource_id for link in asset.resources):
+        raise HTTPException(status_code=400, detail="Resource is not linked to this asset")
+    link = ensure_link(db, organization_id=ctx["organization_id"], resource_id=payload.resource_id, payload=payload)
+    db.commit(); db.refresh(link)
+    return {"id": link.id, "resource_id": link.resource_id, "provider": link.provider, "sync_status": link.sync_status, "table_group_id": link.table_group_id, "test_suite_id": link.test_suite_id}
+
+
+@router.post("/assets/{asset_id}/quality/assess")
+def assess_quality(asset_id: int, payload: QualityAssessmentRequest, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    if not any(link.resource_id == payload.resource_id for link in asset.resources):
+        raise HTTPException(status_code=400, detail="Resource is not linked to this asset")
+    return assess_resource(db, asset, payload.resource_id)
+
+
+@router.patch("/quality/rules/{rule_id}/status")
+def set_quality_rule_status(rule_id: int, payload: QualityRuleStatusUpdate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    rule = db.get(QualityRule, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    get_asset_for_org(db, rule.asset_id, ctx["organization_id"])
+    if payload.status not in {"PROPOSED", "APPROVED", "REJECTED"}:
+        raise HTTPException(status_code=400, detail="Invalid rule status")
+    rule.status = payload.status; db.commit(); return {"success": True, "status": rule.status}
+
+
+@router.post("/assets/{asset_id}/quality/run")
+def run_quality_checks(asset_id: int, payload: QualityRunRequest, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    if not any(link.resource_id == payload.resource_id for link in asset.resources):
+        raise HTTPException(status_code=400, detail="Resource is not linked to this asset")
+    return run_tests(db, asset, payload.resource_id)
+
+
+@router.post("/quality/issues/{issue_id}/decision")
+def quality_issue_decision(issue_id: int, payload: QualityDecisionCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    issue = db.get(QualityIssue, issue_id)
+    if not issue or issue.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Quality issue not found")
+    decide_issue(db, issue, ctx["user"].id, payload.decision_type, payload.notes)
+    return {"success": True, "issue_id": issue.id, "status": issue.status, "decision": payload.decision_type}
 
 
 @router.post("/assets/{asset_id}/submit")

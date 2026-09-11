@@ -8,7 +8,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ads_stage2_pgdata:/var/lib/postgresql/data
+      - ads_stage3_pgdata:/var/lib/postgresql/data
 
   backend:
     build: ./backend
@@ -17,10 +17,15 @@ services:
       CORS_ORIGINS: http://localhost:5173
       AUTH_MODE: demo
       CATALOG_PUBLISHER: mock
+      TESTGEN_MODE: ${TESTGEN_MODE:-mock}
+      TESTGEN_BASE_URL: ${TESTGEN_BASE_URL:-http://host.docker.internal:8530}
+      TESTGEN_TOKEN: ${TESTGEN_TOKEN:-}
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - db
 
 volumes:
-  ads_stage2_pgdata:
+  ads_stage3_pgdata:

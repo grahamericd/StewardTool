@@ -1,150 +1,161 @@
-# AI Data Steward — Stage 2
+# AI Data Steward — Stage 3
 
-Stage 2 turns the Stage 1 catalog/publication POC into a broader governance platform foundation.
+Stage 3 keeps everything validated in Stages 1–2 and makes **data quality actionable** by integrating DataKitchen TestGen as the quality engine beneath the AI Data Steward experience.
 
-## What Stage 2 adds
+## What Stage 3 proves
 
-- Configurable **OIDC authentication** path (with demo mode retained for local demos)
-- Configurable **real CKAN publisher** plus mock publisher
-- DCAT JSON-LD generated only at the publication boundary
-- DQV-style quality summary in the DCAT output
-- Plain-language **catalog profile/readiness validator**
-- Metadata tagging workflow: business area, search terms, update frequency, contact
-- Governance fields: owner, steward, classification, retention
-- Automatically generated **Stewardship Inbox** tasks from governance gaps
-- Data-quality profiles, rules, results, and quality-failure tasks
-- Data Asset 360 tabs for Metadata, Governance, Quality, and Publication
-- Immutable release snapshots and publication audit history retained from Stage 1
-- API tests and a stronger configuration surface
+```text
+Organization → System → Data Asset → Resource
+                        ↓
+                Metadata & Governance
+                        ↓
+             DataKitchen TestGen adapter
+                  ↓             ↓
+              Profiling       Test Runs
+                  ↓             ↓
+             Quality Health   Failures
+                        ↓
+                  Quality Issue
+                        ↓
+                 Stewardship Task
+                        ↓
+                     Guide Me
+                        ↓
+        Bad data / Valid exception /
+        Expectation change / Expert review
+                        ↓
+                 Resolve & audit
+                        ↓
+               Approve → DCAT → CKAN
+```
 
-## The design principle
+The steward never needs to use TestGen terminology. The UI says **Assess Data Quality**, **Suggested quality expectations**, **Quality issues**, and **Guide Me**.
 
-> The user never needs to know they are creating DCAT metadata.
+## TestGen integration modes
 
-The UI asks normal business questions. The backend maps approved, governed records to DCAT only when an immutable release is published.
+Stage 3 intentionally ships with two modes.
 
-## Run locally
+### `TESTGEN_MODE=mock` — default
 
-### Option A — Docker for PostgreSQL + backend
+A deterministic TestGen-shaped adapter exercises the entire workflow without requiring TestGen to be installed first. Use this to validate Stage 3 immediately.
+
+It demonstrates:
+- profile run
+- TestGen-origin quality score
+- suggested expectations
+- rule approval/rejection
+- test execution
+- failed checks
+- automatic quality issues
+- automatic Stewardship Inbox tasks
+- guided human decision and task resolution
+
+### `TESTGEN_MODE=real`
+
+The backend uses TestGen's documented REST run workflow:
+
+- `POST /api/v1/table-groups/{table_group_id}/profiling-runs`
+- `GET /api/v1/jobs/{job_id}`
+- `GET /api/v1/profiling-runs/{job_id}`
+- `POST /api/v1/test-suites/{test_suite_id}/test-runs`
+- `GET /api/v1/test-runs/{job_id}`
+
+Set:
+
+```env
+TESTGEN_MODE=real
+TESTGEN_BASE_URL=http://host.docker.internal:8530
+TESTGEN_TOKEN=<bearer token if your TestGen instance requires one>
+```
+
+Then open Data Asset 360 → Data Quality → **TestGen connection mapping** and enter the Table Group ID and Test Suite ID for the resource.
+
+## First test — no TestGen install required
+
+Stage 3 uses host port **5433** for its PostgreSQL container because many development machines already run PostgreSQL on 5432.
+
+From the project root:
 
 ```bash
-cd ai-data-steward-stage2
+docker compose down
 docker compose up --build
 ```
 
-Then in another terminal:
+In another terminal:
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev -- --host 0.0.0.0
 ```
 
-Open `http://localhost:5173`.
-
-### Option B — Backend with SQLite
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-The backend defaults to SQLite if `DATABASE_URL` is not set.
-
-## Demo identities
-
-- Steward: `steward@demo.gov`
-- Approver: `approver@demo.gov`
-- Org Admin: `admin@demo.gov`
-- Enterprise Admin: `enterprise@demo.gov`
-
-The UI includes a demo role switcher. In real deployments switch `AUTH_MODE=oidc`.
-
-## OIDC configuration
-
-Copy `backend/.env.example` to `.env` and configure:
+Open:
 
 ```text
-AUTH_MODE=oidc
-OIDC_ISSUER=https://your-identity-provider/
-OIDC_AUDIENCE=your-api-audience
-OIDC_JWKS_URL=
-OIDC_EMAIL_CLAIM=email
+http://localhost:5173
 ```
 
-Users still need a provisioned `app_users` record and organization membership. Stage 2 validates the bearer JWT and maps the configured email claim to that user.
+### Stage 3 test sequence
 
-## Real CKAN publishing
+1. Open **Data Asset 360** → **Data Quality**.
+2. Select the structured `APPLICATION` resource.
+3. Click **Assess Data Quality**.
+4. Confirm the latest quality profile says `TESTGEN` and suggested expectations appear.
+5. Approve **ZIP Code should use a recognized 5-digit or ZIP+4 format** and **Application ID is required**.
+6. Click **Run Approved Checks**.
+7. Confirm quality issues appear and the score changes.
+8. Open **Stewardship Inbox** and confirm the failed checks became Quality tasks.
+9. Return to Data Quality and click **Guide Me** on an issue.
+10. Record one of the four decisions:
+    - The data is incorrect
+    - This is a valid exception
+    - The quality expectation needs to change
+    - I need expert review
+11. Confirm resolved work disappears from the active Inbox.
+12. Re-test the existing publication workflow through immutable release → DCAT JSON-LD → catalog publisher.
 
-By default publication uses the mock CKAN adapter. To publish to an actual CKAN instance:
+## Installing TestGen for the real integration
+
+DataKitchen's current recommended Mac/Linux installation uses its installer and supports Docker Compose or a pip/embedded-PostgreSQL mode. Install TestGen **separately** from AI Data Steward so TestGen remains a replaceable technical engine rather than becoming the system of record.
+
+A helper script is included at:
 
 ```text
-CATALOG_PUBLISHER=ckan
-CKAN_BASE_URL=https://catalog.example.gov
-CKAN_API_KEY=...
-CKAN_OWNER_ORG=organization-slug
+scripts/install_testgen.sh
 ```
 
-The real adapter uses CKAN's Action API to create/update packages and create resources. It also stores the generated DCAT JSON-LD as CKAN metadata so a later CKAN/DCAT profile can consume or expose it without changing the stewardship UX.
+After installation:
 
-**Important:** resource updates are deliberately simple in Stage 2. Before production, reconcile CKAN resources by stable external IDs instead of blindly creating a new resource on every republish.
+1. Connect TestGen to the target PostgreSQL/database with read-only permissions.
+2. Create a Table Group around the table(s) you want to assess.
+3. Run profiling once in TestGen.
+4. Create a Test Suite.
+5. If your edition supports REST access tokens, create one and put it in `TESTGEN_TOKEN`.
+6. Switch AI Data Steward to `TESTGEN_MODE=real`.
+7. Map the AI Data Steward resource to the TestGen Table Group / Test Suite IDs.
 
-## Quality integration model
+## Important architecture boundary
 
-Stage 2 creates a clean integration boundary for the quality engine:
+- **AI Data Steward** = catalog, governance, human decisions, tasks, guidance, audit, publication.
+- **TestGen** = technical profiling, test execution, monitoring, quality scoring.
+- **CKAN/DCAT** = enterprise catalog publication and discovery.
 
-```text
-catalog.data_resource
-        ↓
-quality_profiles
-quality_rules
-quality_results
-        ↓
-stewardship_tasks
-```
+AI Data Steward stores TestGen object IDs in `quality_engine_resources`; the core catalog model never depends on TestGen-specific tables.
 
-The seeded `Application` asset includes a quality profile and a failed approved rule so the UI demonstrates quality as part of governance rather than a separate application.
+## New Stage 3 tables
 
-Your existing AI Data Steward data-quality engine can integrate by writing equivalent profile/rule/result records or by adding an adapter that translates its current `metadata.dataset_registry`, `dq.rule`, and `dq.results` tables into these endpoints.
+- `quality_engine_resources`
+- `quality_issues`
+- `quality_decisions`
 
-## Current publication profile
+Existing Stage 2 tables remain intact.
 
-The Stage 2 validator checks, in plain language:
+## Stage 4 candidates
 
-- Business definition
-- Business owner
-- Data steward
-- At least one resource
-- Business area
-- Search terms
-- Update frequency
-- Contact point
-- Authoritative source
-- Classification
-- Retention
-- Quality assessment
-
-Only the required subset blocks submission. The rest contributes to Governance Readiness and creates stewardship tasks.
-
-## Run tests
-
-```bash
-cd backend
-pytest -q
-```
-
-## Recommended next work
-
-Stage 3 should focus on integration and governance intelligence rather than more shell work:
-
-- Map the existing PostgreSQL quality engine to `data_resource`
-- Add real metadata extraction for CSV/database resources
-- Add AI-proposed business definitions and tags with human approval
-- Add configurable organization-specific governance requirements
-- Add stable CKAN resource synchronization
-- Add DCAT-US / Florida application-profile mapping and SHACL-style validation
-- Add data-element/column cataloging and classification
-- Add reference-data and lineage relationships
+- synchronize detailed TestGen column profiles and hygiene findings using the expanded REST API
+- map AI Data Steward approved business expectations into TestGen test definitions/import API
+- TestGen monitor integration for freshness, volume, schema and metric anomalies
+- Connect the existing AI Data Steward Rule Registry as the canonical governed expectation model
+- remediation workflow / assignment to source-system owners
+- trend charts and recurring quality schedules
+- MCP-assisted Steward Copilot

@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     ckan_api_key: str | None = None
     ckan_owner_org: str | None = None
 
+    # DataKitchen TestGen integration
+    # mock = fully functional demo without a TestGen install
+    # real = call an installed TestGen REST API
+    testgen_mode: str = "mock"
+    testgen_base_url: str | None = None
+    testgen_token: str | None = None
+    testgen_timeout_seconds: int = 30
+    testgen_poll_seconds: float = 1.0
+    testgen_max_wait_seconds: int = 180
+
     # Publication profile
     catalog_profile_name: str = "Florida Enterprise Catalog Profile"
     minimum_submission_score: int = 70
