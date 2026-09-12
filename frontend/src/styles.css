@@ -55,3 +55,8 @@
 .mapping-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .source-summary{margin-top:12px;padding:12px 14px;border-radius:10px;background:#f6f8fb;display:flex;flex-direction:column;gap:4px}
 .source-summary span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+
+.quality-context{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0 18px}
+.quality-context>div{border:1px solid #dfe5ec;border-radius:10px;padding:11px 13px;background:#fff}
+.quality-context span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:4px}
+.quality-context b{font-size:14px;overflow-wrap:anywhere}
