@@ -158,6 +158,467 @@ def _evaluated_count(item):
     return int(value) if value is not None else None
 
 
+
+def _complete_issue_tasks(db: Session, issue_id: int):
+    tasks = db.scalars(
+        select(StewardshipTask).where(
+            StewardshipTask.source_type == "QUALITY_ISSUE",
+            StewardshipTask.source_reference == str(issue_id),
+            StewardshipTask.status == "OPEN",
+        )
+    ).all()
+    for task in tasks:
+        task.status = "COMPLETED"
+        task.completed_at = now()
+
+
+def _reopen_issue_task(db: Session, issue: QualityIssue):
+    task = db.scalar(
+        select(StewardshipTask).where(
+            StewardshipTask.source_type == "QUALITY_ISSUE",
+            StewardshipTask.source_reference == str(issue.id),
+        )
+    )
+    if task:
+        task.title = issue.title
+        task.why_it_matters = issue.description or (
+            "A quality finding needs a human stewardship decision."
+        )
+        task.priority = "HIGH" if issue.severity == "HIGH" else "MEDIUM"
+        task.status = "OPEN"
+        task.completed_at = None
+        return task
+    return _open_task_for_issue(db, issue)
+
+
+def _resolve_issue(db: Session, issue: QualityIssue, *, reason: str | None = None):
+    if issue.status != "RESOLVED":
+        issue.status = "RESOLVED"
+        issue.resolved_at = now()
+    details = dict(issue.details or {})
+    if reason:
+        details["resolution_reason"] = reason
+    issue.details = details
+    _complete_issue_tasks(db, issue.id)
+
+
+def _normalize_string(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _issue_key(issue: QualityIssue):
+    details = issue.details or {}
+    fingerprint = details.get("fingerprint")
+    if fingerprint:
+        return str(fingerprint)
+    if issue.external_issue_id:
+        return f"external:{issue.external_issue_id}"
+    return f"title:{_normalize_string(issue.title)}"
+
+
+def _test_result_key(item, index):
+    external_id = (
+        item.get("test_definition_id")
+        or item.get("test_id")
+        or item.get("id")
+    )
+    if external_id:
+        return f"external:{external_id}"
+    return f"name:{_normalize_string(_test_name(item, index))}"
+
+
+def _recursive_strings(payload, keys):
+    found = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in keys:
+                if isinstance(value, list):
+                    for entry in value:
+                        if isinstance(entry, (str, int, float)) or entry is None:
+                            found.append(entry)
+                elif isinstance(value, (str, int, float)) or value is None:
+                    found.append(value)
+            if isinstance(value, (dict, list)):
+                found.extend(_recursive_strings(value, keys))
+    elif isinstance(payload, list):
+        for value in payload:
+            found.extend(_recursive_strings(value, keys))
+    return found
+
+
+def _evidence_from_test_result(item, index):
+    failed_count = _failed_count(item)
+    evaluated_count = _evaluated_count(item)
+
+    score = _normalize_percent(
+        _recursive_number(
+            item,
+            (
+                "score", "dq_score", "quality_score",
+                "pass_rate", "success_rate",
+            ),
+        )
+    )
+
+    samples = _recursive_strings(
+        item,
+        {
+            "sample_values", "failed_values", "example_values",
+            "examples", "sample", "value",
+        },
+    )
+    # De-duplicate while preserving order and cap evidence shown to stewards.
+    deduped_samples = []
+    seen = set()
+    for value in samples:
+        marker = repr(value)
+        if marker not in seen:
+            seen.add(marker)
+            deduped_samples.append(value)
+        if len(deduped_samples) >= 8:
+            break
+
+    columns = _recursive_strings(
+        item,
+        {
+            "column", "column_name", "columns",
+            "tested_column", "field_name",
+        },
+    )
+    columns = [str(x) for x in columns if x not in (None, "")]
+    columns = list(dict.fromkeys(columns))[:8]
+
+    test_type = None
+    for key in ("test_type", "test_definition_type", "type", "test_type_name"):
+        value = item.get(key)
+        if value:
+            test_type = str(value)
+            break
+
+    message = None
+    for key in ("message", "description", "error_message", "result_message"):
+        value = item.get(key)
+        if value and isinstance(value, str):
+            message = value
+            break
+
+    return {
+        "check_name": _test_name(item, index),
+        "status": _result_status(item),
+        "test_type": test_type,
+        "columns": columns,
+        "failed_count": failed_count,
+        "evaluated_count": evaluated_count,
+        "score": score,
+        "sample_values": deduped_samples,
+        "message": message,
+    }
+
+
+def _quality_score_from_results(items):
+    """
+    Prefer row-based pass evidence, then explicit per-check scores,
+    then test pass rate. This keeps the displayed score stable and
+    explainable across TestGen result shapes.
+    """
+    evaluated_total = 0
+    failed_total = 0
+    row_evidence_count = 0
+    explicit_scores = []
+
+    for item in items:
+        evaluated = _evaluated_count(item)
+        failed = _failed_count(item)
+        if evaluated is not None and evaluated > 0 and failed is not None:
+            evaluated_total += evaluated
+            failed_total += max(0, failed)
+            row_evidence_count += 1
+
+        score = _normalize_percent(
+            _recursive_number(
+                item,
+                (
+                    "score", "dq_score", "quality_score",
+                    "pass_rate", "success_rate",
+                ),
+            )
+        )
+        if score is not None:
+            explicit_scores.append(score)
+
+    if row_evidence_count and evaluated_total > 0:
+        return round(
+            max(0.0, min(100.0, (1 - failed_total / evaluated_total) * 100)),
+            1,
+        )
+
+    if explicit_scores:
+        return round(sum(explicit_scores) / len(explicit_scores), 1)
+
+    if items:
+        passed = sum(1 for item in items if not _is_failure(item))
+        return round((passed / len(items)) * 100, 1)
+
+    return 0.0
+
+
+def _upsert_hygiene_issue(
+    db: Session,
+    *,
+    asset: DataAsset,
+    resource_id: int,
+    run_id: str,
+    hygiene_items: list,
+    pii_items: list,
+    column_items: list,
+):
+    existing = db.scalars(
+        select(QualityIssue)
+        .where(
+            QualityIssue.asset_id == asset.id,
+            QualityIssue.resource_id == resource_id,
+            QualityIssue.issue_type == "HYGIENE_FINDING",
+            QualityIssue.source == "TESTGEN",
+        )
+        .order_by(QualityIssue.created_at.asc())
+    ).all()
+
+    open_existing = [
+        issue for issue in existing
+        if issue.status not in {"RESOLVED"}
+    ]
+
+    # Stage 3.3 could create one issue on every profiling run.
+    # Consolidate all of those into one durable stewardship issue.
+    canonical = open_existing[0] if open_existing else None
+
+    if not hygiene_items:
+        for issue in open_existing:
+            _resolve_issue(
+                db,
+                issue,
+                reason="Latest TestGen profile no longer reports hygiene findings.",
+            )
+        return None
+
+    title = (
+        f"Review {len(hygiene_items)} TestGen profiling "
+        f"{'finding' if len(hygiene_items) == 1 else 'findings'}"
+    )
+    details = {
+        "fingerprint": f"hygiene:{asset.id}:{resource_id}",
+        "finding_kind": "PROFILING",
+        "latest_run_id": run_id,
+        "hygiene_issues": hygiene_items,
+        "potential_pii": pii_items,
+        "potential_pii_count": len(pii_items),
+        "profile_column_count": len(column_items),
+        "finding_count": len(hygiene_items),
+    }
+
+    if canonical:
+        canonical.title = title
+        canonical.description = (
+            "TestGen profiling identified data characteristics that may "
+            "need stewardship review. This issue is updated when the "
+            "resource is profiled again instead of creating duplicate work."
+        )
+        canonical.severity = "MEDIUM"
+        canonical.status = "OPEN"
+        canonical.resolved_at = None
+        canonical.external_run_id = run_id
+        canonical.details = details
+        _reopen_issue_task(db, canonical)
+    else:
+        canonical = QualityIssue(
+            organization_id=asset.organization_id,
+            asset_id=asset.id,
+            resource_id=resource_id,
+            issue_type="HYGIENE_FINDING",
+            title=title,
+            description=(
+                "TestGen profiling identified data characteristics that may "
+                "need stewardship review."
+            ),
+            severity="MEDIUM",
+            source="TESTGEN",
+            external_run_id=run_id,
+            details=details,
+        )
+        db.add(canonical)
+        db.flush()
+        _open_task_for_issue(db, canonical)
+
+    # Resolve any duplicate open issues from earlier Stage 3.3 runs.
+    for duplicate in open_existing[1:]:
+        _resolve_issue(
+            db,
+            duplicate,
+            reason="Consolidated into the current TestGen profiling finding.",
+        )
+
+    return canonical
+
+
+def _upsert_test_failure_issue(
+    db: Session,
+    *,
+    asset: DataAsset,
+    resource_id: int,
+    run_id: str,
+    item: dict,
+    index: int,
+):
+    fingerprint = _test_result_key(item, index)
+    evidence = _evidence_from_test_result(item, index)
+    name = evidence["check_name"]
+
+    candidates = db.scalars(
+        select(QualityIssue).where(
+            QualityIssue.asset_id == asset.id,
+            QualityIssue.resource_id == resource_id,
+            QualityIssue.issue_type == "TESTGEN_TEST_FAILURE",
+            QualityIssue.source == "TESTGEN",
+        )
+    ).all()
+
+    issue = next(
+        (candidate for candidate in candidates if _issue_key(candidate) == fingerprint),
+        None,
+    )
+
+    failed_count = evidence["failed_count"]
+    description = f"TestGen reported a failed quality check: {name}."
+    if failed_count is not None:
+        description += f" {failed_count:,} records failed."
+    elif evidence["message"]:
+        description += f" {evidence['message']}"
+
+    details = {
+        "fingerprint": fingerprint,
+        "finding_kind": "TEST_FAILURE",
+        "latest_run_id": run_id,
+        "evidence": evidence,
+        "sample_values": evidence["sample_values"],
+        "evaluated_count": evidence["evaluated_count"],
+        "score": evidence["score"],
+        "testgen_result": item,
+    }
+
+    external_id = (
+        item.get("test_definition_id")
+        or item.get("test_id")
+        or item.get("id")
+    )
+
+    if issue:
+        issue.title = f"Investigate quality failure: {name}"
+        issue.description = description
+        issue.severity = "HIGH"
+        issue.status = "OPEN"
+        issue.resolved_at = None
+        issue.failed_count = failed_count
+        issue.external_run_id = run_id
+        issue.external_issue_id = (
+            str(external_id) if external_id is not None else None
+        )
+        issue.details = details
+        _reopen_issue_task(db, issue)
+        return issue
+
+    issue = QualityIssue(
+        organization_id=asset.organization_id,
+        asset_id=asset.id,
+        resource_id=resource_id,
+        issue_type="TESTGEN_TEST_FAILURE",
+        title=f"Investigate quality failure: {name}",
+        description=description,
+        severity="HIGH",
+        failed_count=failed_count,
+        source="TESTGEN",
+        external_run_id=run_id,
+        external_issue_id=(
+            str(external_id) if external_id is not None else None
+        ),
+        details=details,
+    )
+    db.add(issue)
+    db.flush()
+    _open_task_for_issue(db, issue)
+    return issue
+
+
+def _resolve_cleared_test_failures(
+    db: Session,
+    *,
+    asset: DataAsset,
+    resource_id: int,
+    active_fingerprints: set[str],
+):
+    issues = db.scalars(
+        select(QualityIssue).where(
+            QualityIssue.asset_id == asset.id,
+            QualityIssue.resource_id == resource_id,
+            QualityIssue.issue_type == "TESTGEN_TEST_FAILURE",
+            QualityIssue.source == "TESTGEN",
+        )
+    ).all()
+
+    for issue in issues:
+        if issue.status == "RESOLVED":
+            continue
+        if _issue_key(issue) not in active_fingerprints:
+            _resolve_issue(
+                db,
+                issue,
+                reason=(
+                    "Latest TestGen test run no longer reports this failure."
+                ),
+            )
+
+
+def reconcile_asset_quality_issues(db: Session, asset: DataAsset):
+    """
+    Clean up duplicate Stage 3.3 hygiene findings even before another profile
+    is run. The Stewardship Inbox already synchronizes on read, so this gives
+    existing installations a no-migration cleanup path.
+    """
+    resource_ids = [link.resource_id for link in asset.resources]
+    if not resource_ids:
+        return
+
+    for resource_id in resource_ids:
+        hygiene = db.scalars(
+            select(QualityIssue)
+            .where(
+                QualityIssue.asset_id == asset.id,
+                QualityIssue.resource_id == resource_id,
+                QualityIssue.issue_type == "HYGIENE_FINDING",
+                QualityIssue.source == "TESTGEN",
+                QualityIssue.status != "RESOLVED",
+            )
+            .order_by(QualityIssue.created_at.desc())
+        ).all()
+
+        if len(hygiene) <= 1:
+            continue
+
+        canonical = hygiene[0]
+        details = dict(canonical.details or {})
+        details["fingerprint"] = f"hygiene:{asset.id}:{resource_id}"
+        details["deduplicated_issue_count"] = len(hygiene) - 1
+        canonical.details = details
+        _reopen_issue_task(db, canonical)
+
+        for duplicate in hygiene[1:]:
+            _resolve_issue(
+                db,
+                duplicate,
+                reason="Consolidated by Stage 3.4 duplicate reconciliation.",
+            )
+
+    db.flush()
+
 def assess_resource(db: Session, asset: DataAsset, resource_id: int):
     link = get_link(db, resource_id)
     if not link:
@@ -253,39 +714,17 @@ def assess_resource(db: Session, asset: DataAsset, resource_id: int):
 
             hygiene_items = _items(hygiene)
             pii_items = _items(pii)
+            column_items = _items(columns)
 
-            if hygiene_items:
-                existing = db.scalar(
-                    select(QualityIssue).where(
-                        QualityIssue.asset_id == asset.id,
-                        QualityIssue.resource_id == resource_id,
-                        QualityIssue.issue_type == "HYGIENE_FINDING",
-                        QualityIssue.external_run_id == run_id,
-                    )
-                )
-                if not existing:
-                    issue = QualityIssue(
-                        organization_id=asset.organization_id,
-                        asset_id=asset.id,
-                        resource_id=resource_id,
-                        issue_type="HYGIENE_FINDING",
-                        title=f"Review {len(hygiene_items)} TestGen profiling findings",
-                        description=(
-                            "TestGen profiling identified data characteristics "
-                            "that may need stewardship review."
-                        ),
-                        severity="MEDIUM",
-                        source="TESTGEN",
-                        external_run_id=run_id,
-                        details={
-                            "hygiene_issues": hygiene_items,
-                            "potential_pii_count": len(pii_items),
-                            "profile_column_count": len(_items(columns)),
-                        },
-                    )
-                    db.add(issue)
-                    db.flush()
-                    _open_task_for_issue(db, issue)
+            _upsert_hygiene_issue(
+                db,
+                asset=asset,
+                resource_id=resource_id,
+                run_id=run_id,
+                hygiene_items=hygiene_items,
+                pii_items=pii_items,
+                column_items=column_items,
+            )
 
             hygiene_count = len(hygiene_items)
 
@@ -429,49 +868,28 @@ def run_tests(db: Session, asset: DataAsset, resource_id: int):
                 item for item in test_items if _is_failure(item)
             ]
 
-            passed_count = max(0, len(test_items) - len(failures))
-            score = (
-                round((passed_count / len(test_items)) * 100, 1)
-                if test_items
-                else 0.0
-            )
+            score = _quality_score_from_results(test_items)
 
-            # Create one actionable AI Data Steward issue per failed TestGen check.
+            active_fingerprints = set()
             for index, item in enumerate(failures, start=1):
-                name = _test_name(item, index)
-                failed_count = _failed_count(item)
-                evaluated_count = _evaluated_count(item)
-
-                description = (
-                    f"TestGen reported a failed quality check: {name}."
-                )
-                if failed_count is not None:
-                    description += f" {failed_count} records failed."
-
-                issue = QualityIssue(
-                    organization_id=asset.organization_id,
-                    asset_id=asset.id,
+                active_fingerprints.add(_test_result_key(item, index))
+                _upsert_test_failure_issue(
+                    db,
+                    asset=asset,
                     resource_id=resource_id,
-                    issue_type="TESTGEN_TEST_FAILURE",
-                    title=f"Investigate quality failure: {name}",
-                    description=description,
-                    severity="HIGH",
-                    failed_count=failed_count,
-                    source="TESTGEN",
-                    external_run_id=run_id,
-                    external_issue_id=str(
-                        item.get("id")
-                        or item.get("test_definition_id")
-                        or ""
-                    ) or None,
-                    details={
-                        "testgen_result": item,
-                        "evaluated_count": evaluated_count,
-                    },
+                    run_id=run_id,
+                    item=item,
+                    index=index,
                 )
-                db.add(issue)
-                db.flush()
-                _open_task_for_issue(db, issue)
+
+            # If an older TestGen failure is absent from the newest run,
+            # automatically close that stale issue and its Inbox task.
+            _resolve_cleared_test_failures(
+                db,
+                asset=asset,
+                resource_id=resource_id,
+                active_fingerprints=active_fingerprints,
+            )
 
             db.add(
                 QualityProfile(
@@ -578,10 +996,11 @@ def decide_issue(db: Session, issue: QualityIssue, actor_id: int, decision_type:
         raise HTTPException(status_code=400, detail=f'Decision must be one of: {", ".join(sorted(allowed))}')
     db.add(QualityDecision(issue_id=issue.id, decision_type=decision_type, notes=notes, decided_by=actor_id))
     if decision_type != 'EXPERT_REVIEW':
-        issue.status = 'RESOLVED'; issue.resolved_at = now()
-        task = db.scalar(select(StewardshipTask).where(StewardshipTask.source_type == 'QUALITY_ISSUE', StewardshipTask.source_reference == str(issue.id), StewardshipTask.status == 'OPEN'))
-        if task:
-            task.status = 'COMPLETED'; task.completed_at = now()
+        issue.status = 'RESOLVED'
+        issue.resolved_at = now()
+        _complete_issue_tasks(db, issue.id)
     else:
         issue.status = 'NEEDS_EXPERT_REVIEW'
+        issue.resolved_at = None
+        _reopen_issue_task(db, issue)
     db.commit()

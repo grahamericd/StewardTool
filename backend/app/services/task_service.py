@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from ..models import StewardshipTask
 from .readiness import calculate_readiness
+from .quality_orchestrator import reconcile_asset_quality_issues
 
 
 TASK_TEXT = {
@@ -23,6 +24,7 @@ TASK_TEXT = {
 
 
 def sync_tasks(db: Session, asset, actor_id: int | None = None):
+    reconcile_asset_quality_issues(db, asset)
     readiness = calculate_readiness(asset)
     existing = db.scalars(select(StewardshipTask).where(StewardshipTask.asset_id == asset.id)).all()
     by_type = {t.task_type: t for t in existing}

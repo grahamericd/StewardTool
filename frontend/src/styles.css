@@ -45,3 +45,7 @@
 .guide-panel { border-top:5px solid #1769aa; }
 .decision-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
 .decision-grid button { text-align:left; min-height:52px; }
+
+.evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
+.evidence-grid .metric{padding:10px 12px}
+.evidence-grid .metric strong{font-size:15px}
