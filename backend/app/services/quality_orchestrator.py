@@ -20,21 +20,62 @@ def get_link(db: Session, resource_id: int):
     return db.scalar(select(QualityEngineResource).where(QualityEngineResource.resource_id == resource_id, QualityEngineResource.provider == 'TESTGEN'))
 
 
-def ensure_link(db: Session, *, organization_id: int, resource_id: int, payload):
+def _apply_testgen_defaults(link: QualityEngineResource):
+    """Fill blank mappings from environment defaults without overwriting a resource-specific mapping."""
+    if not link.project_code and settings.testgen_project_code:
+        link.project_code = settings.testgen_project_code
+    if not link.table_group_id and settings.testgen_table_group_id:
+        link.table_group_id = settings.testgen_table_group_id
+    if not link.test_suite_id and settings.testgen_test_suite_id:
+        link.test_suite_id = settings.testgen_test_suite_id
+    return link
+
+
+def _source_mapping_from_link(link: QualityEngineResource):
+    cfg = dict(link.configuration or {})
+    return {
+        "connection_name": cfg.get("source_connection_name"),
+        "database": cfg.get("source_database"),
+        "schema": cfg.get("source_schema"),
+        "table": cfg.get("source_table"),
+        "qualified_name": cfg.get("source_qualified_name") or link.external_table_name,
+    }
+
+
+def ensure_link(db: Session, *, organization_id: int, resource_id: int, payload=None):
     link = get_link(db, resource_id)
     if not link:
-        link = QualityEngineResource(organization_id=organization_id, resource_id=resource_id, provider='TESTGEN')
+        link = QualityEngineResource(
+            organization_id=organization_id,
+            resource_id=resource_id,
+            provider='TESTGEN',
+        )
         db.add(link)
-    for field in ('project_code','connection_id','table_group_id','test_suite_id','external_table_name'):
-        value = getattr(payload, field, None)
-        if value is not None:
-            setattr(link, field, value)
-    if settings.testgen_mode == 'real':
-        link.sync_status = 'CONFIGURED'
-        if not link.project_code and settings.testgen_project_code:
-            link.project_code = settings.testgen_project_code
-    else:
-        link.sync_status = 'MOCK_READY'
+
+    _apply_testgen_defaults(link)
+
+    if payload is not None:
+        for field in ('project_code','connection_id','table_group_id','test_suite_id','external_table_name'):
+            value = getattr(payload, field, None)
+            if value not in (None, ""):
+                setattr(link, field, value)
+
+        cfg = dict(link.configuration or {})
+        for field in ('source_connection_name','source_database','source_schema','source_table'):
+            value = getattr(payload, field, None)
+            if value is not None:
+                cfg[field] = value.strip() if isinstance(value, str) else value
+
+        schema_name = cfg.get("source_schema")
+        table_name = cfg.get("source_table")
+        if table_name:
+            qualified = f"{schema_name}.{table_name}" if schema_name else table_name
+            cfg["source_qualified_name"] = qualified
+            link.external_table_name = qualified
+
+        link.configuration = cfg or None
+
+    link.sync_status = 'CONFIGURED' if settings.testgen_mode == 'real' else 'MOCK_READY'
     db.flush()
     return link
 
@@ -622,23 +663,12 @@ def reconcile_asset_quality_issues(db: Session, asset: DataAsset):
 def assess_resource(db: Session, asset: DataAsset, resource_id: int):
     link = get_link(db, resource_id)
     if not link:
-        link = QualityEngineResource(
+        link = ensure_link(
+            db,
             organization_id=asset.organization_id,
             resource_id=resource_id,
-            provider="TESTGEN",
-            project_code=(
-                settings.testgen_project_code
-                if settings.testgen_mode == "real"
-                else None
-            ),
-            sync_status=(
-                "MOCK_READY"
-                if settings.testgen_mode != "real"
-                else "NEEDS_CONFIGURATION"
-            ),
+            payload=None,
         )
-        db.add(link)
-        db.flush()
 
     try:
         if settings.testgen_mode == "real":

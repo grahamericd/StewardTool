@@ -20,7 +20,7 @@ from ..services.publication import approve, mark_needs_update_if_published, publ
 from ..services.readiness import calculate_readiness
 from ..services.snapshot import build_asset_snapshot
 from ..services.task_service import sync_tasks
-from ..services.quality_orchestrator import assess_resource, decide_issue, ensure_link, run_tests
+from ..services.quality_orchestrator import assess_resource, decide_issue, ensure_link, run_tests, _source_mapping_from_link
 from ..integrations.testgen.client import TestGenClient, TestGenError
 
 router = APIRouter()
@@ -192,6 +192,18 @@ def add_quality_profile(asset_id: int, payload: QualityProfileCreate, ctx=Depend
 @router.get("/assets/{asset_id}/quality")
 def quality(asset_id: int, ctx=Depends(current_context), db: Session = Depends(get_db)):
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+
+    if settings.testgen_mode == "real":
+        for asset_resource in asset.resources:
+            if asset_resource.resource.structure_type == "STRUCTURED":
+                ensure_link(
+                    db,
+                    organization_id=ctx["organization_id"],
+                    resource_id=asset_resource.resource_id,
+                    payload=None,
+                )
+        db.commit()
+
     profiles = db.scalars(select(QualityProfile).where(QualityProfile.asset_id == asset.id).order_by(QualityProfile.profiled_at.desc())).all()
     rules = db.scalars(select(QualityRule).where(QualityRule.asset_id == asset.id).order_by(QualityRule.created_at.desc())).all()
     result = []
@@ -200,7 +212,7 @@ def quality(asset_id: int, ctx=Depends(current_context), db: Session = Depends(g
         result.append({"id": rule.id, "rule_name": rule.rule_name, "rule_type": rule.rule_type, "plain_language_rule": rule.plain_language_rule, "status": rule.status, "rule_definition": rule.rule_definition, "latest_result": None if not latest else {"result_status": latest.result_status, "evaluated_count": latest.evaluated_count, "failed_count": latest.failed_count, "score": latest.score, "details": latest.details, "evaluated_at": latest.evaluated_at}})
     links = db.scalars(select(QualityEngineResource).where(QualityEngineResource.organization_id == ctx["organization_id"], QualityEngineResource.resource_id.in_([x.resource_id for x in asset.resources] or [-1]))).all()
     issues = db.scalars(select(QualityIssue).where(QualityIssue.asset_id == asset.id).order_by(QualityIssue.created_at.desc())).all()
-    return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": i.details, "created_at": i.created_at} for i in issues]}
+    return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "connection_id": x.connection_id, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "source_mapping": _source_mapping_from_link(x), "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": i.details, "created_at": i.created_at} for i in issues]}
 
 
 @router.post("/assets/{asset_id}/quality/rules")
@@ -241,6 +253,8 @@ def quality_engine_status(ctx=Depends(current_context)):
         "configured": (not real) or bool(settings.testgen_base_url and auth_configured),
         "base_url": settings.testgen_base_url if real else None,
         "project_code": settings.testgen_project_code if real else None,
+        "table_group_id": settings.testgen_table_group_id if real else None,
+        "test_suite_id": settings.testgen_test_suite_id if real else None,
         "message": "Real TestGen REST integration is enabled." if real else "Mock TestGen is ready.",
     }
 
@@ -283,7 +297,18 @@ def link_quality_engine(asset_id: int, payload: QualityEngineLinkCreate, ctx=Dep
         raise HTTPException(status_code=400, detail="Resource is not linked to this asset")
     link = ensure_link(db, organization_id=ctx["organization_id"], resource_id=payload.resource_id, payload=payload)
     db.commit(); db.refresh(link)
-    return {"id": link.id, "resource_id": link.resource_id, "provider": link.provider, "sync_status": link.sync_status, "table_group_id": link.table_group_id, "test_suite_id": link.test_suite_id}
+    return {
+        "id": link.id,
+        "resource_id": link.resource_id,
+        "provider": link.provider,
+        "sync_status": link.sync_status,
+        "project_code": link.project_code,
+        "connection_id": link.connection_id,
+        "table_group_id": link.table_group_id,
+        "test_suite_id": link.test_suite_id,
+        "external_table_name": link.external_table_name,
+        "source_mapping": _source_mapping_from_link(link),
+    }
 
 
 @router.post("/assets/{asset_id}/quality/assess")

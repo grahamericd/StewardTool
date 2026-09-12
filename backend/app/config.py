@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     testgen_oauth_client_secret: str | None = None
     testgen_oauth_refresh_token: str | None = None
     testgen_project_code: str | None = None
+    testgen_table_group_id: str | None = None
+    testgen_test_suite_id: str | None = None
     testgen_timeout_seconds: int = 30
     testgen_poll_seconds: float = 1.0
     testgen_max_wait_seconds: int = 600

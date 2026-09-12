@@ -49,3 +49,9 @@
 .evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
 .evidence-grid .metric{padding:10px 12px}
 .evidence-grid .metric strong{font-size:15px}
+
+.mapping-section{padding:14px 0;border-top:1px solid #e5e7eb}
+.mapping-section:first-of-type{border-top:0}
+.mapping-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.source-summary{margin-top:12px;padding:12px 14px;border-radius:10px;background:#f6f8fb;display:flex;flex-direction:column;gap:4px}
+.source-summary span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}

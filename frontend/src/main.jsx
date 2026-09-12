@@ -138,11 +138,30 @@ function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,s
   const [projectCode,setProjectCode]=useState("");
   const [tableGroupId,setTableGroupId]=useState("");
   const [testSuiteId,setTestSuiteId]=useState("");
+  const [sourceConnectionName,setSourceConnectionName]=useState("");
+  const [sourceDatabase,setSourceDatabase]=useState("");
+  const [sourceSchema,setSourceSchema]=useState("");
+  const [sourceTable,setSourceTable]=useState("");
   const [decisionIssue,setDecisionIssue]=useState(null);
   const [notes,setNotes]=useState("");
   const [engineStatus,setEngineStatus]=useState(null);
   const link=quality?.links?.find(x=>x.resource_id===Number(resourceId));
   useEffect(()=>{api("/quality/engine/status",userEmail).then(setEngineStatus).catch(()=>setEngineStatus(null));},[userEmail]);
+
+  useEffect(()=>{
+    if(!resourceId) return;
+    const selectedResource=structured.find(r=>r.resource_id===Number(resourceId));
+    const current=quality?.links?.find(x=>x.resource_id===Number(resourceId));
+    const source=current?.source_mapping||{};
+    setProjectCode(current?.project_code||engineStatus?.project_code||"");
+    setTableGroupId(current?.table_group_id||engineStatus?.table_group_id||"");
+    setTestSuiteId(current?.test_suite_id||engineStatus?.test_suite_id||"");
+    setSourceConnectionName(source.connection_name||"");
+    setSourceDatabase(source.database||"");
+    setSourceSchema(source.schema||"public");
+    setSourceTable(source.table||current?.external_table_name?.split(".").pop()||selectedResource?.name||"");
+  },[resourceId,quality?.links,engineStatus]);
+
   const openIssues=(quality?.issues||[]).filter(i=>i.status!=="RESOLVED");
 
   useEffect(()=>{
@@ -168,7 +187,7 @@ function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,s
       <label>Structured resource to assess</label>
       <select value={resourceId} onChange={e=>setResourceId(e.target.value)}>{structured.map(r=><option key={r.resource_id} value={r.resource_id}>{r.name} · {r.system||"No system"}</option>)}</select>
       {structured.length===0&&<div className="education strong"><b>No structured resource is available.</b><p>Quality profiling applies to structured resources. Unstructured PDFs and document libraries remain governed through metadata, classification, retention, and other stewardship workflows.</p></div>}
-      {quality?.engine_mode==="real"&&<details className="config-box" open><summary>TestGen connection mapping</summary><p className="muted">Create the database connection, table group, and test suite in TestGen once. AI Data Steward then drives profiling and test runs through its REST API.</p><label>Project code<input value={projectCode} onChange={e=>setProjectCode(e.target.value)} placeholder={engineStatus?.project_code||"e.g. default"}/></label><label>Table group ID<input value={tableGroupId} onChange={e=>setTableGroupId(e.target.value)}/></label><label>Test suite ID<input value={testSuiteId} onChange={e=>setTestSuiteId(e.target.value)}/></label><div className="button-row"><button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/link`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId),project_code:projectCode||engineStatus?.project_code,table_group_id:tableGroupId,test_suite_id:testSuiteId,external_table_name:structured.find(r=>r.resource_id===Number(resourceId))?.name})}),"TestGen mapping saved.")}>Save TestGen mapping</button><button className="primary" onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/test-connection`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Authenticated TestGen connection succeeded.")}>Test connection</button></div></details>}
+      {quality?.engine_mode==="real"&&<details className="config-box" open><summary>Governed source & TestGen mapping</summary><p className="muted">Connect this cataloged resource to the real technical source TestGen assesses. Database credentials stay in TestGen; AI Data Steward stores only the governed source identity and TestGen object IDs.</p><div className="mapping-section"><div className="eyebrow">Real governed source</div><div className="mapping-grid"><label>TestGen connection name<input value={sourceConnectionName} onChange={e=>setSourceConnectionName(e.target.value)} placeholder="e.g. Data_Lab"/></label><label>Database<input value={sourceDatabase} onChange={e=>setSourceDatabase(e.target.value)} placeholder="e.g. corporate_registry"/></label><label>Schema<input value={sourceSchema} onChange={e=>setSourceSchema(e.target.value)} placeholder="public"/></label><label>Table<input value={sourceTable} onChange={e=>setSourceTable(e.target.value)} placeholder="corporate_data"/></label></div></div><div className="mapping-section"><div className="eyebrow">TestGen execution mapping</div><div className="mapping-grid"><label>Project code<input value={projectCode} onChange={e=>setProjectCode(e.target.value)} placeholder={engineStatus?.project_code||"DEFAULT"}/></label><label>Table group ID<input value={tableGroupId} onChange={e=>setTableGroupId(e.target.value)} placeholder={engineStatus?.table_group_id||"TestGen table-group UUID"}/></label><label>Test suite ID<input value={testSuiteId} onChange={e=>setTestSuiteId(e.target.value)} placeholder={engineStatus?.test_suite_id||"TestGen test-suite UUID"}/></label></div>{(link?.source_mapping?.qualified_name||link?.external_table_name)&&<div className="source-summary"><b>Currently mapped source</b><span>{[link?.source_mapping?.connection_name,link?.source_mapping?.database,link?.source_mapping?.qualified_name||link?.external_table_name].filter(Boolean).join(" → ")}</span></div>}</div><div className="button-row"><button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/link`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId),project_code:projectCode||engineStatus?.project_code,table_group_id:tableGroupId||engineStatus?.table_group_id,test_suite_id:testSuiteId||engineStatus?.test_suite_id,source_connection_name:sourceConnectionName,source_database:sourceDatabase,source_schema:sourceSchema,source_table:sourceTable,external_table_name:sourceTable?`${sourceSchema?`${sourceSchema}.`:""}${sourceTable}`:structured.find(r=>r.resource_id===Number(resourceId))?.name})}),"Governed source and TestGen mapping saved.")}>Save source mapping</button><button className="primary" onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/test-connection`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Authenticated TestGen connection succeeded.")}>Test connection</button></div></details>}
       <div className="button-row"><button className="primary" disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/assess`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Data quality assessment completed. Review the profiling findings below.")}>Assess Data Quality</button><button disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/run`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),quality?.engine_mode==="real"?"TestGen quality checks ran. Current failures were synchronized into stewardship work.":"Approved quality checks ran. Any failures were converted into stewardship work.")}>{quality?.engine_mode==="real"?"Run Quality Checks":"Run Approved Checks"}</button></div>
     </section>
 

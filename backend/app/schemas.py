@@ -103,6 +103,12 @@ class QualityEngineLinkCreate(BaseModel):
     test_suite_id: str | None = None
     external_table_name: str | None = None
 
+    # Real governed source identity. Credentials stay in TestGen.
+    source_connection_name: str | None = None
+    source_database: str | None = None
+    source_schema: str | None = None
+    source_table: str | None = None
+
 
 class QualityAssessmentRequest(BaseModel):
     resource_id: int
