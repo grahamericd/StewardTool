@@ -21,6 +21,7 @@ from ..services.readiness import calculate_readiness
 from ..services.snapshot import build_asset_snapshot
 from ..services.task_service import sync_tasks
 from ..services.quality_orchestrator import assess_resource, decide_issue, ensure_link, run_tests
+from ..integrations.testgen.client import TestGenClient, TestGenError
 
 router = APIRouter()
 
@@ -223,13 +224,56 @@ def add_quality_result(rule_id: int, payload: QualityResultCreate, ctx=Depends(r
 
 @router.get("/quality/engine/status")
 def quality_engine_status(ctx=Depends(current_context)):
+    real = settings.testgen_mode == "real"
+    auth_configured = (
+        bool(settings.testgen_token)
+        if settings.testgen_auth_mode == "bearer"
+        else all([
+            settings.testgen_oauth_client_id,
+            settings.testgen_oauth_client_secret,
+            settings.testgen_oauth_refresh_token,
+        ])
+    )
     return {
         "provider": "TESTGEN",
         "mode": settings.testgen_mode,
-        "configured": settings.testgen_mode != "real" or bool(settings.testgen_base_url),
-        "base_url": settings.testgen_base_url if settings.testgen_mode == "real" else None,
-        "message": "Mock TestGen is ready for end-to-end workflow testing." if settings.testgen_mode != "real" else "Real TestGen REST integration is enabled.",
+        "auth_mode": settings.testgen_auth_mode if real else None,
+        "configured": (not real) or bool(settings.testgen_base_url and auth_configured),
+        "base_url": settings.testgen_base_url if real else None,
+        "project_code": settings.testgen_project_code if real else None,
+        "message": "Real TestGen REST integration is enabled." if real else "Mock TestGen is ready.",
     }
+
+
+@router.post("/assets/{asset_id}/quality/test-connection")
+def test_quality_engine_connection(
+    asset_id: int,
+    payload: QualityAssessmentRequest,
+    ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")),
+    db: Session = Depends(get_db),
+):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    if not any(link.resource_id == payload.resource_id for link in asset.resources):
+        raise HTTPException(status_code=400, detail="Resource is not linked to this asset")
+    link = db.scalar(select(QualityEngineResource).where(
+        QualityEngineResource.resource_id == payload.resource_id,
+        QualityEngineResource.provider == "TESTGEN",
+    ))
+    project_code = (link.project_code if link else None) or settings.testgen_project_code
+    if settings.testgen_mode != "real":
+        return {"ok": True, "mode": "mock", "message": "Mock TestGen connection is available."}
+    try:
+        result = TestGenClient().check_connection(project_code)
+        if link:
+            link.sync_status = "CONNECTED"
+            db.commit()
+        return {**result, "mode": "real", "base_url": settings.testgen_base_url,
+                "message": "Authenticated connection to TestGen succeeded."}
+    except TestGenError as exc:
+        if link:
+            link.sync_status = "ERROR"
+            db.commit()
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 @router.post("/assets/{asset_id}/quality/link")

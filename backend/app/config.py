@@ -23,10 +23,15 @@ class Settings(BaseSettings):
     # real = call an installed TestGen REST API
     testgen_mode: str = "mock"
     testgen_base_url: str | None = None
+    testgen_auth_mode: str = "oauth_refresh"
     testgen_token: str | None = None
+    testgen_oauth_client_id: str | None = None
+    testgen_oauth_client_secret: str | None = None
+    testgen_oauth_refresh_token: str | None = None
+    testgen_project_code: str | None = None
     testgen_timeout_seconds: int = 30
     testgen_poll_seconds: float = 1.0
-    testgen_max_wait_seconds: int = 180
+    testgen_max_wait_seconds: int = 600
 
     # Publication profile
     catalog_profile_name: str = "Florida Enterprise Catalog Profile"
