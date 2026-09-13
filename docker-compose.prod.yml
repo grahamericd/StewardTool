@@ -1,0 +1,163 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ads_prod_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILES:-5}"
+    networks:
+      - db_net
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      APP_VERSION: 0.4.4-h
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS}
+      ENABLE_API_DOCS: "false"
+      SEED_DEMO_DATA: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      AUTH_MODE: ${AUTH_MODE:-local}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
+      AUTH_TOKEN_HOURS: ${AUTH_TOKEN_HOURS:-8}
+      AUTH_PASSWORD_MIN_LENGTH: ${AUTH_PASSWORD_MIN_LENGTH:-12}
+      AUTH_LOGIN_MAX_FAILURES: ${AUTH_LOGIN_MAX_FAILURES:-5}
+      AUTH_LOGIN_WINDOW_MINUTES: ${AUTH_LOGIN_WINDOW_MINUTES:-15}
+
+      CATALOG_PUBLISHER: ${CATALOG_PUBLISHER:-mock}
+      CKAN_BASE_URL: ${CKAN_BASE_URL:-}
+      CKAN_API_KEY: ${CKAN_API_KEY:-}
+      CKAN_OWNER_ORG: ${CKAN_OWNER_ORG:-}
+
+      TESTGEN_MODE: ${TESTGEN_MODE:-mock}
+      TESTGEN_BASE_URL: ${TESTGEN_BASE_URL:-}
+      TESTGEN_AUTH_MODE: ${TESTGEN_AUTH_MODE:-oauth_refresh}
+      TESTGEN_TOKEN: ${TESTGEN_TOKEN:-}
+      TESTGEN_OAUTH_CLIENT_ID: ${TESTGEN_OAUTH_CLIENT_ID:-}
+      TESTGEN_OAUTH_CLIENT_SECRET: ${TESTGEN_OAUTH_CLIENT_SECRET:-}
+      TESTGEN_OAUTH_REFRESH_TOKEN: ${TESTGEN_OAUTH_REFRESH_TOKEN:-}
+      TESTGEN_PROJECT_CODE: ${TESTGEN_PROJECT_CODE:-}
+      TESTGEN_TABLE_GROUP_ID: ${TESTGEN_TABLE_GROUP_ID:-}
+      TESTGEN_TEST_SUITE_ID: ${TESTGEN_TEST_SUITE_ID:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILES:-5}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - app_net
+      - db_net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: /api
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILES:-5}"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge_net
+      - app_net
+
+
+  edge:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      APP_SITE_ADDRESS: ${APP_SITE_ADDRESS:-http://localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ads_caddy_data:/data
+      - ads_caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILES:-5}"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - edge_net
+
+volumes:
+  ads_prod_pgdata:
+  ads_caddy_data:
+  ads_caddy_config:
+
+networks:
+  edge_net:
+    driver: bridge
+  app_net:
+    driver: bridge
+  db_net:
+    driver: bridge

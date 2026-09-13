@@ -167,7 +167,7 @@ def serialize_asset(asset, db=None):
 @router.get("/me")
 def me(ctx=Depends(current_context)):
     org = ctx["membership"].organization
-    return {"user": {"id": ctx["user"].id, "email": ctx["user"].email, "display_name": ctx["user"].display_name}, "organization": {"id": org.id, "code": org.code, "name": org.name}, "role": ctx["role"]}
+    return {"user": {"id": ctx["user"].id, "email": ctx["user"].email, "display_name": ctx["user"].display_name}, "organization": {"id": org.id, "code": org.code, "name": org.name}, "role": ctx["role"], "must_change_password": ctx.get("must_change_password", False)}
 
 
 @router.get("/dashboard")

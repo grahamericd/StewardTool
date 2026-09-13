@@ -151,3 +151,26 @@ class UnderstandingUpdate(BaseModel):
     search_terms: list[str]
     update_frequency: str
     contact_point: str
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=512)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=512)
+    new_password: str = Field(min_length=12, max_length=512)
+
+
+
+class OrganizationUserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    display_name: str = Field(min_length=1, max_length=255)
+    role: str
+
+
+class OrganizationUserUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: str | None = None
+    membership_active: bool | None = None

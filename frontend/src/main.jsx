@@ -1,15 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { api } from "./api";
+import { api, clearAccessToken, getAccessToken, publicApi, setAccessToken } from "./api";
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
 const PRIMARY_NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps"];
 const REVIEW_NAV = ["Review Queue", "Publishing History"];
+const ADMIN_NAV = ["User Administration"];
 
 function App() {
   const [page, setPage] = useState("Steward Home");
   const [userLabel, setUserLabel] = useState("Steward");
+  const [authConfig, setAuthConfig] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [signedIn, setSignedIn] = useState(Boolean(getAccessToken()));
   const [me, setMe] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [assets, setAssets] = useState([]);
@@ -20,8 +24,20 @@ function App() {
   const [selectedQualityIssueId, setSelectedQualityIssueId] = useState(null);
   const [guidedTask, setGuidedTask] = useState(null);
   const [message, setMessage] = useState("");
-  const userEmail = USERS[userLabel];
+  const userEmail = authConfig?.mode==="demo" ? USERS[userLabel] : null;
   const canReview = ["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
+  const canAdministerUsers = ["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
+
+  useEffect(()=>{
+    publicApi("/auth/config")
+      .then(cfg=>{
+        setAuthConfig(cfg);
+        if(cfg.mode==="demo") setSignedIn(true);
+        else setSignedIn(Boolean(getAccessToken()));
+      })
+      .catch(e=>setMessage(e.message))
+      .finally(()=>setAuthReady(true));
+  },[]);
 
   async function refresh() {
     const [meData, dash, assetData, systemData, taskData] = await Promise.all([
@@ -30,12 +46,54 @@ function App() {
     setMe(meData); setDashboard(dash); setAssets(assetData); setSystems(systemData); setTasks(taskData);
     if (!selectedAssetId && assetData.length) setSelectedAssetId(assetData[0].asset.asset_id);
   }
-  useEffect(() => { refresh().catch(e => setMessage(e.message)); }, [userEmail]);
+  useEffect(() => {
+    if(!authReady || !signedIn) return;
+    refresh().catch(e=>{
+      setMessage(e.message);
+      if(authConfig?.mode!=="demo" && !getAccessToken()){
+        setSignedIn(false);
+        setMe(null);
+      }
+    });
+  }, [userEmail,authReady,signedIn]);
   const selectedAsset = useMemo(() => assets.find(a => a.asset.asset_id === selectedAssetId), [assets, selectedAssetId]);
 
   async function doAction(fn, successMessage) {
     try { setMessage(""); await fn(); await refresh(); setMessage(successMessage); }
     catch (e) { setMessage(e.message); }
+  }
+
+  async function handleLogin(email,password){
+    setMessage("");
+    const result=await publicApi("/auth/login",{method:"POST",body:JSON.stringify({email,password})});
+    setAccessToken(result.access_token);
+    setSignedIn(true);
+    await refresh();
+  }
+
+  async function handleLogout(){
+    try{ await api("/auth/logout",null,{method:"POST"}); }catch{}
+    clearAccessToken();
+    setSignedIn(false);
+    setMe(null); setDashboard(null); setAssets([]); setSystems([]); setTasks([]);
+    setPage("Steward Home");
+    setMessage("");
+  }
+
+  async function handlePasswordChange(currentPassword,newPassword){
+    await api("/auth/change-password",null,{method:"POST",body:JSON.stringify({current_password:currentPassword,new_password:newPassword})});
+    await refresh();
+    setMessage("Password changed.");
+  }
+
+  if(!authReady) return <div className="auth-shell"><div className="auth-card"><div className="brand">AI Data Steward</div><p>Loading secure sign-in…</p></div></div>;
+
+  if(authConfig?.mode!=="demo" && !signedIn){
+    return <LoginPage onLogin={handleLogin} message={message} setMessage={setMessage}/>;
+  }
+
+  if(authConfig?.mode!=="demo" && me?.must_change_password){
+    return <ChangePasswordPage me={me} minLength={authConfig?.password_min_length||12} onChangePassword={handlePasswordChange} onLogout={handleLogout} message={message} setMessage={setMessage}/>;
   }
 
   return <div className="app">
@@ -56,6 +114,11 @@ function App() {
         <nav>{REVIEW_NAV.map(n => <button key={n} onClick={() => setPage(n)} className={page===n?"active":""}>{n}</button>)}</nav>
       </div>}
 
+      {canAdministerUsers&&<div className="nav-section admin-nav">
+        <div className="nav-label">Administration</div>
+        <nav>{ADMIN_NAV.map(n => <button key={n} onClick={() => setPage(n)} className={page===n?"active":""}>{n}</button>)}</nav>
+      </div>}
+
       <div className="aside-guidance">
         <b>Not sure where to start?</b>
         <p>Open My Next Steps. AI Data Steward will guide you to the work that needs attention.</p>
@@ -64,7 +127,9 @@ function App() {
     <main>
       <header>
         <div><div className="org">{me?.organization?.name || "Loading..."}</div><div className="role">{me?.role || ""}</div></div>
-        <label className="role-switch demo-control"><span>Demo role</span><select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select><small>Demo only</small></label>
+        {authConfig?.mode==="demo"
+          ? <label className="role-switch demo-control"><span>Demo role</span><select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select><small>Demo only</small></label>
+          : <div className="signed-in-user"><div><b>{me?.user?.display_name||me?.user?.email}</b><small>{me?.user?.email}</small></div><button onClick={handleLogout}>Sign out</button></div>}
       </header>
       {message && <div className="message">{message}</div>}
       {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} onTask={task=>{
@@ -106,9 +171,78 @@ function App() {
       {page === "Information Details" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} tasks={tasks} role={me?.role} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
       {page === "Review Queue" && <ReviewQueue assets={assets} role={me?.role} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "Publishing History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
+      {page === "User Administration" && canAdministerUsers && <UserAdministration userEmail={userEmail} currentUserId={me?.user?.id} authMode={authConfig?.mode} />}
     </main>
   </div>;
 }
+
+
+function LoginPage({onLogin,message,setMessage}){
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  async function submit(e){
+    e.preventDefault();
+    if(!email.trim()||!password) return;
+    setBusy(true); setMessage("");
+    try{ await onLogin(email.trim(),password); }
+    catch(err){ setMessage(err.message); }
+    finally{ setBusy(false); }
+  }
+
+  return <div className="auth-shell">
+    <div className="auth-card">
+      <div className="brand">AI Data Steward</div>
+      <div className="eyebrow">Secure sign-in</div>
+      <h1>Welcome back</h1>
+      <p className="lead">Sign in with the account provided by your organization.</p>
+      {message&&<div className="message">{message}</div>}
+      <form className="auth-form" onSubmit={submit}>
+        <label>Email<input type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required/></label>
+        <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></label>
+        <button className="primary" disabled={busy}>{busy?"Signing in…":"Sign in"}</button>
+      </form>
+      <p className="auth-help">If you cannot sign in, contact the person who administers AI Data Steward for your organization.</p>
+    </div>
+  </div>;
+}
+
+function ChangePasswordPage({me,minLength,onChangePassword,onLogout,message,setMessage}){
+  const [currentPassword,setCurrentPassword]=useState("");
+  const [newPassword,setNewPassword]=useState("");
+  const [confirm,setConfirm]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  async function submit(e){
+    e.preventDefault();
+    setMessage("");
+    if(newPassword.length<minLength){setMessage(`New password must be at least ${minLength} characters.`);return;}
+    if(newPassword!==confirm){setMessage("New passwords do not match.");return;}
+    setBusy(true);
+    try{await onChangePassword(currentPassword,newPassword);}
+    catch(err){setMessage(err.message);}
+    finally{setBusy(false);}
+  }
+
+  return <div className="auth-shell">
+    <div className="auth-card">
+      <div className="brand">AI Data Steward</div>
+      <div className="eyebrow">Account security</div>
+      <h1>Change your password</h1>
+      <p className="lead">{me?.user?.display_name}, choose a password you do not use for another account.</p>
+      {message&&<div className="message">{message}</div>}
+      <form className="auth-form" onSubmit={submit}>
+        <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} required/></label>
+        <label>New password<input type="password" autoComplete="new-password" minLength={minLength} value={newPassword} onChange={e=>setNewPassword(e.target.value)} required/><small>At least {minLength} characters.</small></label>
+        <label>Confirm new password<input type="password" autoComplete="new-password" value={confirm} onChange={e=>setConfirm(e.target.value)} required/></label>
+        <button className="primary" disabled={busy}>{busy?"Saving…":"Change password"}</button>
+      </form>
+      <button className="link-button" onClick={onLogout}>Sign out instead</button>
+    </div>
+  </div>;
+}
+
 
 function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAllTasks}) {
   const [showIntro,setShowIntro]=useState(()=>localStorage.getItem("steward_intro_complete")!=="yes");
@@ -1621,6 +1755,189 @@ function ReviewQueue({assets,role,userEmail,doAction,onOpen}) {
     </div>)}
   </>;
 }
+
+
+function UserAdministration({userEmail,currentUserId,authMode}){
+  const ROLES=[
+    ["STEWARD","Steward","Identifies, describes, governs, and maintains information."],
+    ["APPROVER","Approver","Reviews submitted stewardship work and can approve or publish."],
+    ["ORG_ADMIN","Organization Admin","Manages users and can perform stewardship and review actions."],
+    ["VIEWER","Viewer","Can view information without making stewardship decisions."],
+    ["ENTERPRISE_ADMIN","Enterprise Admin","Administrative and review access for the organization."]
+  ];
+
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState("");
+  const [notice,setNotice]=useState("");
+  const [createOpen,setCreateOpen]=useState(false);
+  const [form,setForm]=useState({display_name:"",email:"",role:"STEWARD"});
+  const [temporary,setTemporary]=useState(null);
+  const [busy,setBusy]=useState(false);
+
+  async function load(){
+    setLoading(true); setError("");
+    try{setData(await api("/admin/users",userEmail));}
+    catch(e){setError(e.message);}
+    finally{setLoading(false);}
+  }
+
+  useEffect(()=>{load()},[userEmail]);
+
+  async function createUser(e){
+    e.preventDefault();
+    setBusy(true); setError(""); setNotice(""); setTemporary(null);
+    try{
+      const result=await api("/admin/users",userEmail,{
+        method:"POST",
+        body:JSON.stringify(form)
+      });
+      setTemporary({
+        title:"User created",
+        email:result.user.email,
+        password:result.temporary_password,
+        message:result.message
+      });
+      setForm({display_name:"",email:"",role:"STEWARD"});
+      setCreateOpen(false);
+      await load();
+    }catch(e){setError(e.message);}
+    finally{setBusy(false);}
+  }
+
+  async function updateMembership(user,changes,success){
+    setBusy(true); setError(""); setNotice("");
+    try{
+      await api(`/admin/users/${user.membership_id}`,userEmail,{
+        method:"PATCH",
+        body:JSON.stringify(changes)
+      });
+      setNotice(success);
+      await load();
+    }catch(e){setError(e.message);}
+    finally{setBusy(false);}
+  }
+
+  async function resetPassword(user){
+    if(!window.confirm(`Generate a new temporary password for ${user.display_name}? Their current password will stop working.`)) return;
+    setBusy(true); setError(""); setNotice(""); setTemporary(null);
+    try{
+      const result=await api(`/admin/users/${user.membership_id}/reset-password`,userEmail,{method:"POST"});
+      setTemporary({
+        title:"Temporary password generated",
+        email:user.email,
+        password:result.temporary_password,
+        message:result.message
+      });
+      await load();
+    }catch(e){setError(e.message);}
+    finally{setBusy(false);}
+  }
+
+  async function copyPassword(){
+    if(!temporary?.password) return;
+    try{
+      await navigator.clipboard.writeText(temporary.password);
+      setNotice("Temporary password copied.");
+    }catch{
+      setNotice("Copy was unavailable. Select and copy the temporary password manually.");
+    }
+  }
+
+  if(loading) return <><h1>User Administration</h1><div className="panel"><p>Loading organization users…</p></div></>;
+
+  return <>
+    <div className="title-row">
+      <div>
+        <div className="eyebrow">Administration</div>
+        <h1>User Administration</h1>
+        <p className="lead">Add people to your organization, assign their responsibilities, deactivate access, and reset temporary passwords.</p>
+      </div>
+      <button className="primary" onClick={()=>{setCreateOpen(true);setTemporary(null);setNotice("");setError("")}}>Add user</button>
+    </div>
+
+    {error&&<div className="message error-message">{error}</div>}
+    {notice&&<div className="message">{notice}</div>}
+
+    {temporary&&<section className="panel temporary-password-panel">
+      <div className="task-head">
+        <div>
+          <div className="eyebrow">Shown once</div>
+          <h2>{temporary.title}</h2>
+          <p>{temporary.message}</p>
+        </div>
+        <button onClick={()=>setTemporary(null)}>Dismiss</button>
+      </div>
+      {temporary.password?<div className="temporary-password">
+        <div><span>User</span><b>{temporary.email}</b></div>
+        <div><span>Temporary password</span><code>{temporary.password}</code></div>
+        <button className="primary" onClick={copyPassword}>Copy temporary password</button>
+      </div>:<p>This authentication mode does not use a local temporary password.</p>}
+      <div className="education"><b>Share it securely.</b><p>The temporary password is not retrievable after this screen is dismissed. The user will be required to choose a new password after signing in.</p></div>
+    </section>}
+
+    {createOpen&&<section className="panel admin-create-panel">
+      <div className="task-head"><div><div className="eyebrow">New organization user</div><h2>Add a user</h2></div><button onClick={()=>setCreateOpen(false)}>Cancel</button></div>
+      <form className="admin-user-form" onSubmit={createUser}>
+        <label>Full name<input value={form.display_name} onChange={e=>setForm({...form,display_name:e.target.value})} required/></label>
+        <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} required/></label>
+        <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>{ROLES.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></label>
+        <div className="education"><b>{ROLES.find(r=>r[0]===form.role)?.[1]}</b><p>{ROLES.find(r=>r[0]===form.role)?.[2]}</p></div>
+        <div className="button-row"><button className="primary" disabled={busy}>Create user</button><button type="button" onClick={()=>setCreateOpen(false)}>Cancel</button></div>
+      </form>
+    </section>}
+
+    <section className="panel">
+      <div className="task-head">
+        <div><div className="eyebrow">Organization access</div><h2>{data?.users?.length||0} users</h2><p className="muted">Roles control what each person can do. Deactivation removes access to this organization without deleting stewardship history.</p></div>
+        <button onClick={load}>Refresh</button>
+      </div>
+
+      <div className="admin-user-list">
+        {(data?.users||[]).map(user=>{
+          const isSelf=user.user_id===currentUserId;
+          const role=ROLES.find(r=>r[0]===user.role);
+          return <div className={`admin-user-card ${user.membership_active?"":"inactive"}`} key={user.membership_id}>
+            <div className="admin-user-identity">
+              <div className="avatar-circle">{(user.display_name||user.email).slice(0,1).toUpperCase()}</div>
+              <div><b>{user.display_name}{isSelf&&<span className="you-badge">You</span>}</b><span>{user.email}</span></div>
+            </div>
+
+            <div className="admin-user-role">
+              <label>Role
+                <select value={user.role} disabled={busy||isSelf||!user.membership_active} onChange={e=>updateMembership(user,{role:e.target.value},"Role updated.")}>
+                  {ROLES.map(([value,label])=><option value={value} key={value}>{label}</option>)}
+                </select>
+              </label>
+              <small>{role?.[2]}</small>
+            </div>
+
+            <div className="admin-user-security">
+              <span className={user.membership_active?"status status-active":"status status-inactive"}>{user.membership_active?"Active":"Inactive"}</span>
+              {authMode==="local"&&<small>{user.must_change_password?"Temporary password pending":"Password established"}</small>}
+            </div>
+
+            <div className="admin-user-actions">
+              {authMode==="local"&&<button disabled={busy||isSelf||!user.membership_active} onClick={()=>resetPassword(user)}>Reset password</button>}
+              {isSelf
+                ? <small>Manage your own password from your account.</small>
+                : <button disabled={busy} onClick={()=>updateMembership(user,{membership_active:!user.membership_active},user.membership_active?"User deactivated.":"User reactivated.")}>{user.membership_active?"Deactivate":"Reactivate"}</button>}
+            </div>
+          </div>;
+        })}
+      </div>
+
+      {(data?.users||[]).length===0&&<EmptyState title="No organization users yet." text="Add the first person who will participate in this pilot."/>}
+    </section>
+
+    <section className="panel">
+      <div className="eyebrow">Role guide</div>
+      <h2>What the roles mean</h2>
+      <div className="role-guide-grid">{ROLES.map(([value,label,description])=><div key={value}><b>{label}</b><p>{description}</p></div>)}</div>
+    </section>
+  </>;
+}
+
 
 function PublicationHistory({assets,selectedAssetId,setSelectedAssetId,userEmail}) { const [history,setHistory]=useState(null); useEffect(()=>{if(selectedAssetId)api(`/assets/${selectedAssetId}/history`,userEmail).then(setHistory)},[selectedAssetId,userEmail]); return <><h1>Publishing History</h1><p className="lead">Review the approval and publication history for governed information. Technical release details remain available inside each release record.</p><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select><div className="two-col"><section className="panel"><h2>Audit timeline</h2>{history?.events?.length?history.events.map(e=><div className="timeline" key={e.id}><b>{e.event_type.replaceAll("_"," ")}</b><span>{e.from_status||"—"} → {e.to_status||"—"}</span><small>{e.created_at}</small></div>):<EmptyState title="No publication events yet." text="Submission, approval, return, and publishing activity will appear here."/>}</section><section className="panel"><h2>Immutable releases</h2>{history?.releases?.length?history.releases.map(r=><details key={r.id}><summary>Release v{r.version_number} {r.published_at?"· Published":"· Approved"}</summary><p><b>Snapshot hash:</b> {r.snapshot_hash}</p>{r.ckan_name&&<p><b>Catalog name:</b> {r.ckan_name}</p>}{r.publication_result?.dcat_payload&&<><p><b>Technical publication payload (DCAT JSON-LD)</b></p><pre>{JSON.stringify(r.publication_result.dcat_payload,null,2)}</pre></>}</details>):<EmptyState title="No approved releases yet." text="Approved release history will appear here after the first approval."/>}</section></div></> }
 

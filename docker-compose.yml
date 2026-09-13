@@ -13,9 +13,15 @@ services:
   backend:
     build: ./backend
     environment:
+      APP_ENV: development
+      APP_VERSION: 0.4.4-h
+      ENABLE_API_DOCS: "true"
+      SEED_DEMO_DATA: "true"
+      TRUSTED_HOSTS: localhost,127.0.0.1,backend
       DATABASE_URL: postgresql+psycopg://steward:steward@db:5432/ai_data_steward
       CORS_ORIGINS: http://localhost:5173
       AUTH_MODE: demo
+      AUTH_SECRET_KEY: development-only-change-me-1234567890
       CATALOG_PUBLISHER: mock
       TESTGEN_MODE: ${TESTGEN_MODE:-mock}
       TESTGEN_BASE_URL: ${TESTGEN_BASE_URL:-http://host.docker.internal:8530}
