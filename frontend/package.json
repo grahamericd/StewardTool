@@ -1,7 +1,7 @@
 {
   "name": "ai-data-steward-stage3",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1-a",
   "type": "module",
   "scripts": {
     "dev": "vite",

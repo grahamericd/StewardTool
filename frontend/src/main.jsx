@@ -17,6 +17,7 @@ function App() {
   const [selectedAssetId, setSelectedAssetId] = useState(null);
   const [assetTab, setAssetTab] = useState("Overview");
   const [selectedQualityIssueId, setSelectedQualityIssueId] = useState(null);
+  const [guidedTask, setGuidedTask] = useState(null);
   const [message, setMessage] = useState("");
   const userEmail = USERS[userLabel];
 
@@ -51,10 +52,12 @@ function App() {
       {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} onTask={task=>{
         setSelectedAssetId(task.asset_id);
         if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+          setGuidedTask(null);
           setAssetTab("Data Quality");
           setSelectedQualityIssueId(Number(task.source_reference));
         } else {
-          setAssetTab("Governance");
+          setGuidedTask(task);
+          setAssetTab(task.governance_domain==="QUALITY"?"Data Quality":"Governance");
           setSelectedQualityIssueId(null);
         }
         setPage("Data Asset 360");
@@ -64,15 +67,17 @@ function App() {
       {page === "My Next Steps" && <Inbox tasks={tasks} onGuide={task=>{
         setSelectedAssetId(task.asset_id);
         if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+          setGuidedTask(null);
           setAssetTab("Data Quality");
           setSelectedQualityIssueId(Number(task.source_reference));
         } else {
-          setAssetTab("Governance");
+          setGuidedTask(task);
+          setAssetTab(task.governance_domain==="QUALITY"?"Data Quality":"Governance");
           setSelectedQualityIssueId(null);
         }
         setPage("Data Asset 360");
       }} />}
-      {page === "Data Asset 360" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} />}
+      {page === "Data Asset 360" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
       {page === "Review Queue" && <ReviewQueue assets={assets} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
       {page === "Publication History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
     </main>
@@ -207,7 +212,7 @@ function Discover({systems, userEmail, onDone}) {
   </>;
 }
 
-function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId}) {
+function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId,guidedTask,setGuidedTask}) {
   const [quality,setQuality]=useState(null), [metaKey,setMetaKey]=useState("theme"), [metaValue,setMetaValue]=useState("Professional Licensing"), [gov,setGov]=useState({});
   useEffect(()=>{if(asset){setGov({business_owner:asset.asset.business_owner||"",data_steward:asset.asset.data_steward||"",classification:asset.asset.classification||"",retention_requirement:asset.asset.retention_requirement||"",retention_authority:asset.asset.retention_authority||""});api(`/assets/${asset.asset.asset_id}/quality`,userEmail).then(setQuality)}},[asset?.asset?.asset_id,userEmail]);
   if(!asset)return <p>No data assets yet.</p>; const a=asset.asset;
@@ -216,10 +221,178 @@ function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAss
     <div className="tabs">{["Overview","Metadata & Tags","Governance","Data Quality","Publication"].map(t=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}</div>
     {tab==="Overview"&&<div className="two-col"><section className="panel"><h2>Governance readiness</h2>{asset.readiness.checks.map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div></div>)}</section><section className="panel"><h2>Where this information lives</h2>{asset.resources.map(r=><div className="resource" key={r.resource_id}><b>{r.name}</b><span>{friendlyType(r.resource_type)} · {r.structure_type}</span><span>{r.system||"No system"}{r.is_authoritative?" · Authoritative source":""}</span></div>)}</section></div>}
     {tab==="Metadata & Tags"&&<section className="panel"><div className="eyebrow">Plain language → standards behind the scenes</div><h2>Help people understand and find this information</h2><p className="muted">The user never sees DCAT field names. These answers are mapped to standards when published.</p><label>{metaKey==="theme"?"What business area does this information relate to?":metaKey==="keyword"?"What words would someone search for?":metaKey==="update_frequency"?"How often is this information updated?":"Who can answer questions about this information?"}</label><select value={metaKey} onChange={e=>setMetaKey(e.target.value)}><option value="theme">Business area</option><option value="keyword">Search terms</option><option value="update_frequency">Update frequency</option><option value="contact">Contact point</option></select><input value={metaValue} onChange={e=>setMetaValue(e.target.value)}/><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/metadata`,userEmail,{method:"PUT",body:JSON.stringify({metadata_key:metaKey,metadata_value:metaKey==="keyword"?metaValue.split(",").map(x=>x.trim()).filter(Boolean):metaKey==="contact"?{name:metaValue,email:"contact@example.gov"}:metaValue})}),"Metadata saved and readiness recalculated.")}>Save metadata</button></section>}
-    {tab==="Governance"&&<section className="panel"><h2>Govern this information</h2><div className="form-grid"><label>Business owner<input value={gov.business_owner||""} onChange={e=>setGov({...gov,business_owner:e.target.value})}/></label><label>Data steward<input value={gov.data_steward||""} onChange={e=>setGov({...gov,data_steward:e.target.value})}/></label><label>Classification<select value={gov.classification||""} onChange={e=>setGov({...gov,classification:e.target.value})}><option value="">Needs review</option><option>Public</option><option>Internal</option><option>Sensitive</option><option>Restricted</option><option>Needs Expert Review</option></select></label><label>Retention requirement<input value={gov.retention_requirement||""} onChange={e=>setGov({...gov,retention_requirement:e.target.value})} placeholder="e.g., 5 years after closure"/></label><label className="wide">Retention authority<input value={gov.retention_authority||""} onChange={e=>setGov({...gov,retention_authority:e.target.value})} placeholder="Records schedule / policy source"/></label></div><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(gov)}),"Governance information saved.")}>Save governance decisions</button></section>}
+    {tab==="Governance"&&<GovernanceGuide asset={asset} gov={gov} setGov={setGov} userEmail={userEmail} doAction={doAction} guidedTask={guidedTask} setGuidedTask={setGuidedTask}/>}
     {tab==="Data Quality"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
     {tab==="Publication"&&<PublicationPanel asset={asset} userEmail={userEmail} doAction={doAction}/>} 
   </>;
+}
+
+function GovernanceGuide({asset,gov,setGov,userEmail,doAction,guidedTask,setGuidedTask}) {
+  const a=asset.asset;
+  const [mode,setMode]=useState(guidedTask?.governance_domain||"");
+  const [step,setStep]=useState(1);
+  const [ownerDecision,setOwnerDecision]=useState(gov.business_owner||"");
+  const [stewardDecision,setStewardDecision]=useState(gov.data_steward||"");
+  const [publicIntent,setPublicIntent]=useState("");
+  const [peopleInfo,setPeopleInfo]=useState("");
+  const [restrictedRule,setRestrictedRule]=useState("");
+  const [classificationRecommendation,setClassificationRecommendation]=useState("");
+  const [businessActivity,setBusinessActivity]=useState("");
+  const [retentionKnown,setRetentionKnown]=useState("");
+  const [retentionPeriod,setRetentionPeriod]=useState(gov.retention_requirement||"");
+  const [retentionAuthority,setRetentionAuthority]=useState(gov.retention_authority||"");
+
+  useEffect(()=>{
+    if(guidedTask){
+      setMode(guidedTask.governance_domain||"");
+      setStep(1);
+    }
+  },[guidedTask?.id]);
+
+  function recommendClassification(){
+    let rec="Needs Expert Review";
+    if(restrictedRule==="yes" || peopleInfo==="sensitive") rec="Restricted";
+    else if(peopleInfo==="basic") rec="Sensitive";
+    else if(publicIntent==="yes" && peopleInfo==="none" && restrictedRule==="no") rec="Public";
+    else if(publicIntent==="no" && peopleInfo==="none" && restrictedRule==="no") rec="Internal";
+    setClassificationRecommendation(rec);
+    setStep(4);
+  }
+
+  async function saveGovernance(patch,message){
+    await doAction(
+      ()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(patch)}),
+      message
+    );
+    setGov({...gov,...patch});
+    setGuidedTask(null);
+    setMode("");
+    setStep(1);
+  }
+
+  async function askExpert(label){
+    if(!guidedTask?.id) return;
+    await doAction(
+      ()=>api(`/tasks/${guidedTask.id}/expert-review`,userEmail,{method:"POST"}),
+      `${label} has been moved to Waiting on Others for expert review.`
+    );
+    setGuidedTask(null);
+    setMode("");
+    setStep(1);
+  }
+
+  const taskTitle=guidedTask?.title;
+
+  if(mode==="OWNERSHIP"){
+    return <section className="panel guide-panel governance-wizard">
+      <div className="wizard-head"><div><div className="eyebrow">Guided task · Ownership</div><h2>{taskTitle||"Identify who is responsible"}</h2></div><span>Step {step} of 3</span></div>
+      {step===1&&<>
+        <h3>Who can make business decisions about this information?</h3>
+        <p className="lead">Think about the business function—not necessarily the IT team—that can decide what this information means, how it should be used, and what “good” looks like.</p>
+        <div className="example-box"><b>Examples</b><p>For licensing records, this might be the Licensing Division. For payroll information, it might be Human Resources or Finance.</p></div>
+        <label>Business owner or business function</label>
+        <input value={ownerDecision} onChange={e=>setOwnerDecision(e.target.value)} placeholder="e.g., Division of Corporations"/>
+        <div className="button-row"><button className="primary" disabled={!ownerDecision.trim()} onClick={()=>setStep(2)}>Continue</button><button onClick={()=>askExpert("Ownership task")}>I’m not sure who owns this</button></div>
+      </>}
+      {step===2&&<>
+        <h3>Who coordinates the day-to-day stewardship?</h3>
+        <p className="lead">This is the person or role who keeps the information description, governance decisions, quality follow-up, and contacts current. They do not have to make every business decision themselves.</p>
+        <label>Data steward</label>
+        <input value={stewardDecision} onChange={e=>setStewardDecision(e.target.value)} placeholder="Person, team, or stewardship role"/>
+        <div className="button-row"><button onClick={()=>setStep(1)}>Back</button><button className="primary" disabled={!stewardDecision.trim()} onClick={()=>setStep(3)}>Review recommendation</button><button onClick={()=>askExpert("Ownership task")}>I need help identifying the steward</button></div>
+      </>}
+      {step===3&&<>
+        <h3>Here is what will be recorded</h3>
+        <div className="decision-summary"><div><span>Business owner</span><b>{ownerDecision}</b></div><div><span>Data steward</span><b>{stewardDecision}</b></div></div>
+        <div className="education strong"><b>Why this is enough</b><p>You supplied the business knowledge. AI Data Steward records it in the governance profile and closes the related readiness gaps.</p></div>
+        <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" onClick={()=>saveGovernance({business_owner:ownerDecision,data_steward:stewardDecision},"Ownership responsibilities saved.")}>Confirm and save</button></div>
+      </>}
+    </section>;
+  }
+
+  if(mode==="CLASSIFICATION"){
+    return <section className="panel guide-panel governance-wizard">
+      <div className="wizard-head"><div><div className="eyebrow">Guided task · Classification</div><h2>{taskTitle||"Determine how this information should be handled"}</h2></div><span>Step {step} of 4</span></div>
+      {step===1&&<>
+        <h3>Is this information intended to be openly available to the public?</h3>
+        <p className="lead">Answer based on the information itself, not whether someone could technically access the system.</p>
+        <Choice value={publicIntent} setValue={setPublicIntent} options={[["yes","Yes, it is intended for public release"],["no","No, it is for internal or controlled use"],["unsure","I’m not sure"]]}/>
+        <div className="button-row"><button className="primary" disabled={!publicIntent} onClick={()=>setStep(2)}>Continue</button></div>
+      </>}
+      {step===2&&<>
+        <h3>Does it contain information about individual people?</h3>
+        <p className="lead">Think about names, contact details, identifiers, financial details, health information, disciplinary information, credentials, or similar personal information.</p>
+        <Choice value={peopleInfo} setValue={setPeopleInfo} options={[["none","No personal information"],["basic","Yes — ordinary identifying/contact information"],["sensitive","Yes — sensitive personal, financial, health, credential, or similarly high-risk information"],["unsure","I’m not sure"]]}/>
+        <div className="button-row"><button onClick={()=>setStep(1)}>Back</button><button className="primary" disabled={!peopleInfo} onClick={()=>setStep(3)}>Continue</button></div>
+      </>}
+      {step===3&&<>
+        <h3>Do you know of a law, policy, contract, or security requirement that restricts access or sharing?</h3>
+        <p className="lead">You do not need to know the citation. We only need to know whether you are aware of a restriction.</p>
+        <Choice value={restrictedRule} setValue={setRestrictedRule} options={[["yes","Yes"],["no","No known restriction"],["unsure","I’m not sure"]]}/>
+        <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" disabled={!restrictedRule} onClick={recommendClassification}>Show recommendation</button></div>
+      </>}
+      {step===4&&<>
+        <h3>Recommended classification</h3>
+        <div className="recommendation-card"><span>AI Data Steward recommends</span><strong>{classificationRecommendation}</strong><p>This is a stewardship recommendation based on your answers, not a substitute for legal, privacy, records, or security review.</p></div>
+        {classificationRecommendation==="Needs Expert Review"?<div className="education strong"><b>There is not enough certainty to classify this confidently.</b><p>Move the task to expert review rather than guessing. The steward can return to it when the appropriate expert responds.</p></div>:<label>Classification<select value={classificationRecommendation} onChange={e=>setClassificationRecommendation(e.target.value)}><option>Public</option><option>Internal</option><option>Sensitive</option><option>Restricted</option><option>Needs Expert Review</option></select></label>}
+        <div className="button-row"><button onClick={()=>setStep(3)}>Back</button>{classificationRecommendation==="Needs Expert Review"?<button className="primary" onClick={()=>askExpert("Classification task")}>Ask for expert review</button>:<button className="primary" onClick={()=>saveGovernance({classification:classificationRecommendation},"Classification decision saved.")}>Accept and save</button>}</div>
+      </>}
+    </section>;
+  }
+
+  if(mode==="LIFECYCLE" || mode==="RETENTION"){
+    return <section className="panel guide-panel governance-wizard">
+      <div className="wizard-head"><div><div className="eyebrow">Guided task · Retention</div><h2>{taskTitle||"Determine how long this information must be kept"}</h2></div><span>Step {step} of 4</span></div>
+      {step===1&&<>
+        <h3>What business activity creates or uses this information?</h3>
+        <p className="lead">Describe the activity in ordinary language. Records retention is usually tied to the business activity, not the database table or file format.</p>
+        <textarea rows="4" value={businessActivity} onChange={e=>setBusinessActivity(e.target.value)} placeholder="e.g., Register corporations and maintain corporate filing history"/>
+        <div className="button-row"><button className="primary" disabled={!businessActivity.trim()} onClick={()=>setStep(2)}>Continue</button></div>
+      </>}
+      {step===2&&<>
+        <h3>Do you already know the approved retention requirement?</h3>
+        <p className="lead">Choose the answer that best reflects what you know today. You should not invent a retention period.</p>
+        <div className="choice-grid">
+          <button type="button" className={retentionKnown==="yes"?"choice selected":"choice"} onClick={()=>{setRetentionKnown("yes");setStep(3)}}>Yes — I know the approved retention period and authority</button>
+          <button type="button" className={retentionKnown==="no"?"choice selected":"choice"} onClick={()=>{setRetentionKnown("no");setStep(4)}}>No — I need Records Management to help determine it</button>
+        </div>
+        <div className="button-row"><button onClick={()=>setStep(1)}>Back</button></div>
+      </>}
+      {step===3&&<>
+        <h3>Record the approved requirement</h3>
+        <p className="lead">Use the wording from the approved records schedule or policy. Do not invent a retention period.</p>
+        <label>Retention requirement<input value={retentionPeriod} onChange={e=>setRetentionPeriod(e.target.value)} placeholder="e.g., 5 years after closure"/></label>
+        <label>Retention authority<input value={retentionAuthority} onChange={e=>setRetentionAuthority(e.target.value)} placeholder="Records schedule, item number, or policy source"/></label>
+        <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" disabled={!retentionPeriod.trim()||!retentionAuthority.trim()} onClick={()=>saveGovernance({retention_requirement:retentionPeriod,retention_authority:retentionAuthority},"Retention requirement saved.")}>Confirm and save</button></div>
+      </>}
+      {step===4&&<>
+        <h3>Records Management should help determine the retention requirement</h3>
+        <p className="lead">That is a valid stewardship outcome. You should not guess at a retention period when the approved requirement is unknown.</p>
+        <div className="referral-card">
+          <div><span>Information asset</span><b>{a.name||"Current information asset"}</b></div>
+          <div><span>Business activity</span><b>{businessActivity}</b></div>
+          <div><span>Question for Records Management</span><b>What approved retention requirement and authority apply to this information?</b></div>
+        </div>
+        <div className="education strong"><b>What happens next?</b><p>The retention task will move to <b>Waiting on Others</b> for expert review. You can continue with other stewardship work while Records Management helps determine the answer.</p></div>
+        <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" onClick={()=>askExpert("Retention task")}>Send to Records Management</button></div>
+      </>}
+    </section>;
+  }
+
+  return <section className="panel">
+    <div className="eyebrow">Governance</div><h2>What do you need to work on?</h2>
+    <p className="lead">Choose a guided task. AI Data Steward will ask plain-language questions and translate your answers into the governance profile.</p>
+    <div className="guide-launch-grid">
+      <button onClick={()=>{setMode("OWNERSHIP");setStep(1)}}><b>Ownership</b><span>Who makes business decisions and who maintains stewardship?</span></button>
+      <button onClick={()=>{setMode("CLASSIFICATION");setStep(1)}}><b>Classification</b><span>How should this information be handled and protected?</span></button>
+      <button onClick={()=>{setMode("LIFECYCLE");setStep(1)}}><b>Retention</b><span>How long should it be kept, and under what authority?</span></button>
+    </div>
+    <details className="advanced-details"><summary>Advanced governance details</summary><p className="muted">Experienced users can edit the profile directly. New stewards should normally use the guided tasks above.</p><div className="form-grid"><label>Business owner<input value={gov.business_owner||""} onChange={e=>setGov({...gov,business_owner:e.target.value})}/></label><label>Data steward<input value={gov.data_steward||""} onChange={e=>setGov({...gov,data_steward:e.target.value})}/></label><label>Classification<select value={gov.classification||""} onChange={e=>setGov({...gov,classification:e.target.value})}><option value="">Needs review</option><option>Public</option><option>Internal</option><option>Sensitive</option><option>Restricted</option><option>Needs Expert Review</option></select></label><label>Retention requirement<input value={gov.retention_requirement||""} onChange={e=>setGov({...gov,retention_requirement:e.target.value})}/></label><label className="wide">Retention authority<input value={gov.retention_authority||""} onChange={e=>setGov({...gov,retention_authority:e.target.value})}/></label></div><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(gov)}),"Governance information saved.")}>Save advanced details</button></details>
+  </section>;
+}
+
+function Choice({value,setValue,options}) {
+  return <div className="choice-grid">{options.map(([v,label])=><button type="button" key={v} className={value===v?"choice selected":"choice"} onClick={()=>setValue(v)}>{label}</button>)}</div>;
 }
 
 function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,setSelectedQualityIssueId}) {
@@ -311,7 +484,25 @@ function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,s
 }
 
 function PublicationPanel({asset,userEmail,doAction}) {
-  return <section className="panel"><div className="eyebrow">Enterprise Catalog</div><h2>Publication readiness</h2><p>The publication validator knows the catalog profile. The steward only sees what needs to be completed.</p>{asset.readiness.checks.filter(c=>c.required).map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Ready for publication":c.guidance}</small></div></div>)}<div className="lifecycle">{["DRAFT","IN_REVIEW","APPROVED","PUBLISHED"].map(s=><div key={s} className={asset.publication.status===s?"life current":"life"}>{s.replace("_"," ")}</div>)}</div><div className="button-row"><button className="primary" onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/submit`,userEmail,{method:"POST",body:JSON.stringify({comments:"Ready for review."})}),"Submitted for review.")}>Submit for review</button><button onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved and immutable release created.")}>Approve</button><button onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published to the configured catalog adapter.")}>Publish</button></div></section>;
+  const required=asset.readiness.checks.filter(c=>c.required);
+  const missing=required.filter(c=>!c.complete);
+  const ready=missing.length===0;
+  const status=asset.publication.status;
+  return <section className="panel">
+    <div className="eyebrow">Guided publication readiness</div>
+    <h2>{ready?"This information is ready for the next review step":"There are still things to finish before review"}</h2>
+    <p className="lead">{ready?"You have completed the required stewardship information. Submitting does not publish the information—it sends the governed snapshot to an approver for review.":"AI Data Steward has checked the required stewardship information. Finish the items below before submitting rather than trying to understand catalog standards yourself."}</p>
+    <div className={`publication-readiness ${ready?"ready":"not-ready"}`}><strong>{required.length-missing.length} of {required.length}</strong><span>required stewardship checks complete</span></div>
+    {required.map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div></div>)}
+    <div className="education"><b>What happens next?</b><p><b>Submit for review</b> sends the asset to an approver. <b>Approval</b> creates an immutable governed release. <b>Publish</b> makes the approved release available through the configured enterprise catalog adapter.</p></div>
+    <div className="lifecycle">{["DRAFT","IN_REVIEW","APPROVED","PUBLISHED"].map(s=><div key={s} className={status===s?"life current":"life"}>{s.replace("_"," ")}</div>)}</div>
+    <div className="button-row">
+      <button className="primary" disabled={!ready||!["DRAFT","NEEDS_UPDATE","REJECTED"].includes(status)} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/submit`,userEmail,{method:"POST",body:JSON.stringify({comments:"Stewardship checks complete; ready for review."})}),"Submitted for review.")}>Submit for review</button>
+      <button disabled={status!=="IN_REVIEW"} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved and immutable release created.")}>Approve</button>
+      <button disabled={status!=="APPROVED"} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published to the configured catalog adapter.")}>Publish</button>
+    </div>
+    {!ready&&<p className="muted">The submit button stays unavailable until required stewardship checks are complete.</p>}
+  </section>;
 }
 
 function ReviewQueue({assets,userEmail,doAction,onOpen}) { const review=assets.filter(a=>["IN_REVIEW","APPROVED","NEEDS_UPDATE"].includes(a.publication.status)); return <><h1>Review Queue</h1><p className="lead">Assets waiting for governance approval or enterprise publication.</p>{review.length===0&&<div className="empty">Nothing is waiting for review.</div>}{review.map(a=><div className="review-row" key={a.asset.asset_id}><div><b>{a.asset.name}</b><span>{a.readiness.score}% governance readiness · {a.quality?.overall_score??"—"}% quality</span></div><Status value={a.publication.status}/><div className="button-row"><button onClick={()=>onOpen(a.asset.asset_id)}>Inspect</button>{a.publication.status==="IN_REVIEW"&&<><button onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the remaining governance questions."})}),"Returned for changes.")}>Return</button><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved.")}>Approve</button></>}{a.publication.status==="APPROVED"&&<button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish</button>}</div></div>)}</> }

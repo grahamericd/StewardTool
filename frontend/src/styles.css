@@ -139,3 +139,33 @@
 .journey.current>span{background:#dceefa;color:#145a86}
 @media(max-width:900px){.journey-steps{grid-template-columns:1fr 1fr}.steward-home-head{flex-direction:column}}
 @media(max-width:560px){.journey-steps{grid-template-columns:1fr}}
+
+.governance-wizard{border-top:4px solid #2077b4}
+.wizard-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}
+.wizard-head>span{font-size:12px;font-weight:700;background:#eef6fb;padding:6px 10px;border-radius:999px;white-space:nowrap}
+.choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:16px 0}
+.choice{padding:14px;text-align:left;border:1px solid #d8e0e8;background:#fff;border-radius:10px;line-height:1.35}
+.choice.selected{border-color:#2077b4;background:#eef7fd;box-shadow:0 0 0 2px rgba(32,119,180,.08)}
+.example-box,.recommendation-card,.decision-summary{border:1px solid #dfe5ec;background:#f8fafc;border-radius:10px;padding:14px;margin:14px 0}
+.example-box p,.recommendation-card p{margin:5px 0 0;color:#667085}
+.recommendation-card{display:flex;flex-direction:column;gap:5px}
+.recommendation-card strong{font-size:24px}
+.decision-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.decision-summary div{display:flex;flex-direction:column;gap:4px}
+.decision-summary span{font-size:12px;color:#667085;text-transform:uppercase;font-weight:700}
+.guide-launch-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}
+.guide-launch-grid button{display:flex;flex-direction:column;gap:5px;text-align:left;padding:16px;border:1px solid #d8e0e8;background:#fff;border-radius:10px}
+.guide-launch-grid button:hover{border-color:#8dbbdd;background:#f7fbfe}
+.guide-launch-grid span{font-size:13px;color:#667085;line-height:1.4}
+.advanced-details{margin-top:20px;border-top:1px solid #e6eaef;padding-top:14px}
+.advanced-details summary{cursor:pointer;font-weight:700}
+.publication-readiness{display:flex;align-items:baseline;gap:8px;padding:14px;border-radius:10px;margin:14px 0}
+.publication-readiness strong{font-size:26px}
+.publication-readiness.ready{background:#f1faf3;border:1px solid #cce7d0}
+.publication-readiness.not-ready{background:#fff9ec;border:1px solid #eedca6}
+button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:800px){.guide-launch-grid{grid-template-columns:1fr}.wizard-head{flex-direction:column}}
+
+.referral-card{display:grid;gap:10px;border:1px solid #cfe0ef;background:#f6fbff;border-radius:10px;padding:14px;margin:14px 0}
+.referral-card>div{display:flex;flex-direction:column;gap:3px}
+.referral-card span{font-size:12px;text-transform:uppercase;font-weight:700;color:#667085}

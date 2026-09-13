@@ -299,6 +299,28 @@ def complete_task(task_id: int, payload: TaskComplete, ctx=Depends(require_roles
     task.status = "COMPLETED"; task.completed_at = datetime.now(timezone.utc); db.commit(); return {"success": True}
 
 
+@router.post("/tasks/{task_id}/expert-review")
+def request_task_expert_review(task_id: int, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    task = db.get(StewardshipTask, task_id)
+    if not task or task.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = "NEEDS_EXPERT_REVIEW"
+    task.completed_at = None
+    db.commit()
+    return {"success": True, "status": task.status}
+
+
+@router.post("/tasks/{task_id}/resume")
+def resume_task(task_id: int, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    task = db.get(StewardshipTask, task_id)
+    if not task or task.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = "OPEN"
+    task.completed_at = None
+    db.commit()
+    return {"success": True, "status": task.status}
+
+
 @router.post("/assets/{asset_id}/quality/profiles")
 def add_quality_profile(asset_id: int, payload: QualityProfileCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
