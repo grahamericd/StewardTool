@@ -4,10 +4,10 @@ import { api } from "./api";
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
-const NAV = ["My Organization", "Discover Data", "Stewardship Inbox", "Data Asset 360", "Review Queue", "Publication History"];
+const NAV = ["Steward Home", "My Information", "Discover Data", "My Next Steps", "Data Asset 360", "Review Queue", "Publication History"];
 
 function App() {
-  const [page, setPage] = useState("My Organization");
+  const [page, setPage] = useState("Steward Home");
   const [userLabel, setUserLabel] = useState("Steward");
   const [me, setMe] = useState(null);
   const [dashboard, setDashboard] = useState(null);
@@ -48,9 +48,20 @@ function App() {
         <label className="role-switch">Demo as<select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select></label>
       </header>
       {message && <div className="message">{message}</div>}
-      {page === "My Organization" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
+      {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} onTask={task=>{
+        setSelectedAssetId(task.asset_id);
+        if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+          setAssetTab("Data Quality");
+          setSelectedQualityIssueId(Number(task.source_reference));
+        } else {
+          setAssetTab("Governance");
+          setSelectedQualityIssueId(null);
+        }
+        setPage("Data Asset 360");
+      }} onInventory={()=>setPage("My Information")} onDiscover={()=>setPage("Discover Data")} onAllTasks={()=>setPage("My Next Steps")} />}
+      {page === "My Information" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
       {page === "Discover Data" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Data Asset 360")}} />}
-      {page === "Stewardship Inbox" && <Inbox tasks={tasks} onGuide={task=>{
+      {page === "My Next Steps" && <Inbox tasks={tasks} onGuide={task=>{
         setSelectedAssetId(task.asset_id);
         if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
           setAssetTab("Data Quality");
@@ -66,6 +77,86 @@ function App() {
       {page === "Publication History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
     </main>
   </div>;
+}
+
+function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAllTasks}) {
+  const [showIntro,setShowIntro]=useState(()=>localStorage.getItem("steward_intro_complete")!=="yes");
+  const priorityOrder={HIGH:0,MEDIUM:1,LOW:2};
+  const work=[...(tasks||[])].sort((a,b)=>(priorityOrder[a.priority]??9)-(priorityOrder[b.priority]??9));
+  const now=work.filter(t=>(t.bucket||"NOW")==="NOW");
+  const waiting=work.filter(t=>(t.bucket||"NOW")==="WAITING");
+  const next=now[0];
+  const assetCount=assets?.length||0;
+  const qualityTasks=work.filter(t=>t.source_type==="QUALITY_ISSUE").length;
+  const governanceTasks=work.filter(t=>t.source_type!=="QUALITY_ISSUE").length;
+
+  const responsibilities=[
+    ["Understand","Know what information exists, what it means, where it lives, and who is responsible."],
+    ["Govern","Confirm ownership, classification, retention, and other stewardship decisions."],
+    ["Trust","Review quality findings and make evidence-based decisions without guessing."],
+    ["Maintain","Keep information current as systems, policies, quality, and business needs change."],
+    ["Publish","Help information move to approval and publication when it is ready."]
+  ];
+
+  return <>
+    {showIntro&&<section className="welcome-panel">
+      <div className="eyebrow">New to data stewardship?</div>
+      <h1>You do not need to be a governance expert.</h1>
+      <p className="lead">Your role is to help make sure important information is understood, responsibly governed, and trustworthy. AI Data Steward will show you what needs attention, explain why it matters, and guide you through the decision.</p>
+      <div className="responsibility-grid">{responsibilities.map(([title,text],idx)=><div className="responsibility-card" key={title}><span>{idx+1}</span><div><b>{title}</b><p>{text}</p></div></div>)}</div>
+      <div className="callout"><b>What you are not expected to do</b><p>You do not need to know every governance rule, make legal or security decisions alone, or guess when you are unsure. Your job is to recognize what needs attention, bring the right context together, make the decisions you are qualified to make, and involve the right expert when needed.</p></div>
+      <div className="button-row"><button className="primary" onClick={()=>{localStorage.setItem("steward_intro_complete","yes");setShowIntro(false)}}>Show me what needs my attention</button><button onClick={onDiscover}>Help me identify information</button></div>
+    </section>}
+
+    <div className="steward-home-head">
+      <div><div className="eyebrow">Steward Home</div><h1>What needs your attention</h1><p className="lead">Work the highest-value item first. You can always ask for help or expert review rather than guessing.</p></div>
+      <button onClick={()=>setShowIntro(true)}>What is my role?</button>
+    </div>
+
+    <div className="metrics four">
+      <Metric label="Information assets" value={assetCount}/>
+      <Metric label="Needs your attention" value={now.length}/>
+      <Metric label="Waiting on others" value={waiting.length}/>
+      <Metric label="Governance readiness" value={`${dashboard?.average_governance_readiness??0}%`}/>
+    </div>
+
+    {next?<section className="panel start-here">
+      <div className="eyebrow">Start here</div>
+      <h2>{next.title}</h2>
+      <p><b>{next.asset_name}</b> · {next.responsibility||next.governance_domain}</p>
+      <div className="guided-task-grid">
+        <div><b>Why this matters</b><p>{next.why_it_matters}</p></div>
+        <div><b>What you should do</b><p>{next.recommended_action}</p></div>
+        <div><b>What this responsibility means</b><p>{next.learn_text}</p></div>
+      </div>
+      <button className="primary" onClick={()=>onTask(next)}>{next.source_type==="QUALITY_ISSUE"?"Review findings":"Guide me through this"}</button>
+    </section>:<section className="panel success-panel"><h2>You are caught up.</h2><p>Nothing currently needs your attention. AI Data Steward will bring work back here when something changes.</p></section>}
+
+    <div className="two-col steward-columns">
+      <section className="panel">
+        <div className="task-head"><div><div className="eyebrow">Your work</div><h2>Next up</h2></div><button onClick={onAllTasks}>View all</button></div>
+        {now.slice(1,4).length===0&&<div className="empty">No additional tasks right now.</div>}
+        {now.slice(1,4).map(t=><div className="home-task" key={t.id}><div><span className="priority">{t.priority}</span><b>{t.title}</b><small>{t.asset_name} · {t.responsibility||t.governance_domain}</small></div><button onClick={()=>onTask(t)}>Open</button></div>)}
+      </section>
+      <section className="panel">
+        <div className="task-head"><div><div className="eyebrow">Coordination</div><h2>Waiting on others</h2></div></div>
+        {waiting.length===0&&<div className="empty">Nothing is waiting on someone else.</div>}
+        {waiting.slice(0,4).map(t=><div className="home-task waiting-task" key={t.id}><div><b>{t.title}</b><small>{t.asset_name}</small></div><span>Waiting</span></div>)}
+      </section>
+    </div>
+
+    <section className="panel stewardship-map">
+      <div className="eyebrow">Your stewardship journey</div><h2>How the work fits together</h2>
+      <div className="journey-steps">
+        <div className={assetCount>0?"journey done":"journey current"}><span>1</span><b>Discover</b><small>Know what information exists</small></div>
+        <div className={assetCount>0?"journey done":"journey"}><span>2</span><b>Understand</b><small>Describe purpose, owner, and source</small></div>
+        <div className={governanceTasks===0?"journey done":"journey current"}><span>3</span><b>Govern</b><small>Classification, retention, accountability</small></div>
+        <div className={qualityTasks===0?"journey done":"journey current"}><span>4</span><b>Trust</b><small>Review evidence and quality</small></div>
+        <div className="journey"><span>5</span><b>Publish & maintain</b><small>Approve, publish, and keep current</small></div>
+      </div>
+      <div className="button-row"><button onClick={onInventory}>View my information</button><button onClick={onDiscover}>Add information</button></div>
+    </section>
+  </>;
 }
 
 function Dashboard({dashboard, assets, onOpen}) {
@@ -92,7 +183,7 @@ function Inbox({tasks, onGuide}) {
   const rank = {HIGH:0, MEDIUM:1, LOW:2};
   const sorted = [...tasks].sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9));
   return <>
-    <h1>My Next Steps</h1><p className="lead">You do not need to know which governance module to visit. These are the actions that need your attention.</p>
+    <h1>My Next Steps</h1><p className="lead">Start at the top and use the guided workflow. You do not need to know which governance module to visit, and you should escalate rather than guess when you are unsure.</p>
     <div className="task-summary">{["HIGH","MEDIUM","LOW"].map(p=><Metric key={p} label={`${p} priority`} value={tasks.filter(t=>t.priority===p).length}/>)}</div>
     {sorted.length===0 && <div className="empty">Nothing needs attention right now.</div>}
     {sorted.map(t=>{const isQuality=t.source_type==="QUALITY_ISSUE";return <div className={`task task-${t.priority.toLowerCase()}`} key={t.id}>

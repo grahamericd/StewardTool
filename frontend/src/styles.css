@@ -109,3 +109,33 @@
 .pattern-list{display:grid;gap:6px;margin-top:8px}
 .pattern-list>span{display:flex;justify-content:space-between;gap:12px;padding:7px 9px;border-radius:7px;background:#f8fafc}
 .pattern-list code{overflow-wrap:anywhere}
+
+.welcome-panel{border:1px solid #cfe0ef;border-radius:14px;padding:22px;margin:0 0 22px;background:linear-gradient(180deg,#f6fbff,#fff)}
+.welcome-panel h1{margin:5px 0 8px}
+.responsibility-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:18px 0}
+.responsibility-card{display:flex;gap:10px;padding:12px;border:1px solid #dfe5ec;border-radius:10px;background:#fff}
+.responsibility-card>span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#e9f4fb;font-weight:700;flex:0 0 auto}
+.responsibility-card p{margin:4px 0 0;color:#667085;font-size:13px;line-height:1.4}
+.steward-home-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.start-here{border-top:4px solid #2077b4}
+.guided-task-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0}
+.guided-task-grid>div{padding:12px;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc}
+.guided-task-grid p{margin:5px 0 0}
+.success-panel{border-left:4px solid #2e7d32}
+.steward-columns{margin-top:16px}
+.home-task{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #edf0f3}
+.home-task:last-child{border-bottom:0}
+.home-task>div{display:flex;flex-direction:column;gap:3px}
+.home-task small{color:#667085}
+.waiting-task>span{font-size:11px;text-transform:uppercase;font-weight:700;color:#755600;background:#fff5db;padding:5px 8px;border-radius:999px}
+.stewardship-map{margin-top:16px}
+.journey-steps{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}
+.journey{display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #dfe5ec;border-radius:10px;background:#fff}
+.journey>span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#eef2f6;font-weight:700}
+.journey small{color:#667085;line-height:1.35}
+.journey.done{background:#f5fbf6;border-color:#cce7d0}
+.journey.done>span{background:#dff2e2;color:#256029}
+.journey.current{border-color:#8dbbdd;background:#f6fbff}
+.journey.current>span{background:#dceefa;color:#145a86}
+@media(max-width:900px){.journey-steps{grid-template-columns:1fr 1fr}.steward-home-head{flex-direction:column}}
+@media(max-width:560px){.journey-steps{grid-template-columns:1fr}}

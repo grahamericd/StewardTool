@@ -27,6 +27,89 @@ from ..integrations.testgen.client import TestGenClient, TestGenError
 router = APIRouter()
 
 
+def _task_guidance(task):
+    domain = (task.governance_domain or "").upper()
+    source_type = (task.source_type or "").upper()
+
+    if source_type == "QUALITY_ISSUE":
+        return {
+            "responsibility": "Trust the information",
+            "learn_title": "What does a data steward do here?",
+            "learn_text": (
+                "Review the evidence, confirm what the business expects, and record "
+                "whether the finding needs correction, is acceptable, needs a quality "
+                "expectation, or needs expert review."
+            ),
+            "can_escalate": True,
+        }
+
+    if domain == "OWNERSHIP":
+        return {
+            "responsibility": "Know who is accountable",
+            "learn_title": "Why ownership matters",
+            "learn_text": (
+                "Your job is to make sure the correct business owner and steward are "
+                "identified. You are not expected to personally make every business "
+                "decision about the information."
+            ),
+            "can_escalate": True,
+        }
+
+    if domain == "CLASSIFICATION":
+        return {
+            "responsibility": "Protect the information appropriately",
+            "learn_title": "What classification means",
+            "learn_text": (
+                "Classification describes how sensitive the information is and helps "
+                "drive handling, access, sharing, and protection decisions."
+            ),
+            "can_escalate": True,
+        }
+
+    if domain in {"LIFECYCLE", "RETENTION"}:
+        return {
+            "responsibility": "Keep information for the right amount of time",
+            "learn_title": "What retention means",
+            "learn_text": (
+                "Retention determines how long information must be maintained and what "
+                "authority governs that period. If you are unsure, involve records "
+                "management rather than guessing."
+            ),
+            "can_escalate": True,
+        }
+
+    if domain in {"METADATA", "DESCRIPTION"}:
+        return {
+            "responsibility": "Make the information understandable",
+            "learn_title": "Why description matters",
+            "learn_text": (
+                "Good stewardship means someone unfamiliar with the system can still "
+                "understand what the information represents, where it comes from, and "
+                "how it is used."
+            ),
+            "can_escalate": False,
+        }
+
+    return {
+        "responsibility": "Take care of governed information",
+        "learn_title": "Your stewardship responsibility",
+        "learn_text": (
+            "Review what is missing, confirm the business reality, and record the "
+            "decision so the organization has a trusted, auditable understanding of "
+            "its information."
+        ),
+        "can_escalate": True,
+    }
+
+
+def _task_bucket(task):
+    status = (task.status or "").upper()
+    if status in {"WAITING", "BLOCKED", "NEEDS_EXPERT_REVIEW"}:
+        return "WAITING"
+    return "NOW"
+
+
+
 def asset_query():
     return select(DataAsset).options(
         selectinload(DataAsset.resources).selectinload(AssetResource.resource).selectinload(DataResource.system),
@@ -165,12 +248,48 @@ def upsert_metadata(asset_id: int, payload: MetadataUpsert, ctx=Depends(require_
 
 @router.get("/tasks")
 def list_tasks(ctx=Depends(current_context), db: Session = Depends(get_db)):
-    assets = db.scalars(asset_query().where(DataAsset.organization_id == ctx["organization_id"])).all()
-    for asset in assets: sync_tasks(db, asset)
+    assets = db.scalars(
+        asset_query().where(
+            DataAsset.organization_id == ctx["organization_id"]
+        )
+    ).all()
+    for asset in assets:
+        sync_tasks(db, asset)
     db.commit()
-    tasks = db.scalars(select(StewardshipTask).where(StewardshipTask.organization_id == ctx["organization_id"], StewardshipTask.status == "OPEN").order_by(StewardshipTask.priority, StewardshipTask.created_at)).all()
+
+    tasks = db.scalars(
+        select(StewardshipTask)
+        .where(
+            StewardshipTask.organization_id == ctx["organization_id"],
+            StewardshipTask.status != "COMPLETED",
+        )
+        .order_by(
+            StewardshipTask.priority,
+            StewardshipTask.created_at,
+        )
+    ).all()
+
     names = {a.id: a.name for a in assets}
-    return [{"id": t.id, "asset_id": t.asset_id, "asset_name": names.get(t.asset_id), "task_type": t.task_type, "governance_domain": t.governance_domain, "title": t.title, "why_it_matters": t.why_it_matters, "recommended_action": t.recommended_action, "priority": t.priority, "status": t.status, "source_type": t.source_type, "source_reference": t.source_reference} for t in tasks]
+    response = []
+    for task in tasks:
+        guidance = _task_guidance(task)
+        response.append({
+            "id": task.id,
+            "asset_id": task.asset_id,
+            "asset_name": names.get(task.asset_id),
+            "task_type": task.task_type,
+            "governance_domain": task.governance_domain,
+            "title": task.title,
+            "why_it_matters": task.why_it_matters,
+            "recommended_action": task.recommended_action,
+            "priority": task.priority,
+            "status": task.status,
+            "source_type": task.source_type,
+            "source_reference": task.source_reference,
+            "bucket": _task_bucket(task),
+            **guidance,
+        })
+    return response
 
 
 @router.post("/tasks/{task_id}/complete")
