@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -443,12 +444,15 @@ def _display_column(raw):
 
 
 def _hygiene_kind(raw):
+    # TestGen 5.92.1 exposes the human-readable name in issue_type_name and
+    # the numeric code in issue_type. Always prefer the readable value.
     value = _first_recursive_value(
         raw,
         (
-            "issue_type", "hygiene_type", "hygiene_issue_type",
-            "hygiene_issue", "issue", "type", "category",
-            "issue_name", "rule_name", "test_name",
+            "issue_type_name", "issue_name", "hygiene_type",
+            "hygiene_issue_type", "hygiene_issue", "issue",
+            "rule_name", "test_name", "type", "category",
+            "issue_type",
         ),
         "profiling finding",
     )
@@ -462,6 +466,77 @@ def _hygiene_kind(raw):
     return str(value).strip()
 
 
+def _parse_testgen_detail(detail):
+    """
+    Parse TestGen 5.92.1 hygiene detail strings such as:
+      Dummy Values: 0, Empty String: 5034, Null: 0, Records: 5195
+      Non-Alpha Values: 37, Semantic Type: City, Records: 5195
+      Patterns: NNNNN (5064), NNNN (7), Dummy Values: 0
+      Minimum Value: 04282026
+    """
+    if not detail or not isinstance(detail, str):
+        return {}
+
+    parsed = {"raw_detail": detail}
+
+    def integer(label):
+        match = re.search(
+            rf"{re.escape(label)}\s*:\s*([0-9,]+)",
+            detail,
+            re.IGNORECASE,
+        )
+        return int(match.group(1).replace(",", "")) if match else None
+
+    for key, label in [
+        ("records", "Records"),
+        ("empty_string_count", "Empty String"),
+        ("null_count", "Null"),
+        ("dummy_value_count", "Dummy Values"),
+        ("non_alpha_count", "Non-Alpha Values"),
+    ]:
+        value = integer(label)
+        if value is not None:
+            parsed[key] = value
+
+    semantic = re.search(
+        r"Semantic Type\s*:\s*([^,]+)",
+        detail,
+        re.IGNORECASE,
+    )
+    if semantic:
+        parsed["semantic_type"] = semantic.group(1).strip()
+
+    minimum = re.search(
+        r"Minimum Value\s*:\s*([^,]+)",
+        detail,
+        re.IGNORECASE,
+    )
+    if minimum:
+        parsed["minimum_value"] = minimum.group(1).strip()
+
+    patterns = re.search(
+        r"Patterns\s*:\s*(.*?)(?:,\s*Dummy Values\s*:|$)",
+        detail,
+        re.IGNORECASE,
+    )
+    if patterns:
+        parsed_patterns = []
+        for value, count in re.findall(
+            r"([^,]+?)\s*\(([0-9,]+)\)",
+            patterns.group(1),
+        ):
+            parsed_patterns.append(
+                {
+                    "pattern": value.strip(),
+                    "count": int(count.replace(",", "")),
+                }
+            )
+        if parsed_patterns:
+            parsed["patterns"] = parsed_patterns
+
+    return parsed
+
+
 def _hygiene_count(raw):
     value = _first_recursive_value(
         raw,
@@ -471,9 +546,33 @@ def _hygiene_count(raw):
         ),
     )
     try:
-        return int(value) if value is not None else None
+        if value is not None:
+            return int(value)
     except (TypeError, ValueError):
-        return None
+        pass
+
+    detail = _first_recursive_value(raw, ("detail", "details"))
+    parsed = _parse_testgen_detail(detail)
+
+    # Pick the count that actually describes the hygiene condition.
+    issue_name = str(raw.get("issue_type_name") or "").lower()
+    if "blank" in issue_name:
+        return (
+            parsed.get("empty_string_count", 0)
+            + parsed.get("null_count", 0)
+            + parsed.get("dummy_value_count", 0)
+        )
+    if "non-alpha" in issue_name:
+        return parsed.get("non_alpha_count")
+    if "zip code format" in issue_name and parsed.get("patterns"):
+        # Sum patterns that are not the canonical NNNNN or NNNNN-NNNN forms.
+        bad = 0
+        for item in parsed["patterns"]:
+            if item["pattern"] not in {"NNNNN", "NNNNN-NNNN"}:
+                bad += item["count"]
+        return bad
+
+    return None
 
 
 def _hygiene_examples(raw):
@@ -508,6 +607,34 @@ def _hygiene_plain_language(column, kind):
     column_label = column if column != "This field" else "This field"
 
     patterns = [
+        (
+            ("non-standard blank values",),
+            f"{column_label} contains blanks that are represented inconsistently",
+            "Blank values represented as empty strings or other placeholders can behave differently from true null values in validation, matching, and reporting.",
+            "Confirm whether blank values are expected for this field. If they are, decide on one standard representation; if they are not, investigate why the source is leaving the field blank.",
+            "COMPLETENESS",
+        ),
+        (
+            ("invalid usa zip code format",),
+            f"{column_label} contains ZIP codes in unexpected formats",
+            "Non-standard ZIP formats can reduce address matching, validation, and interoperability with other systems.",
+            "Review the reported format distribution and confirm which formats the business accepts. Standardize or correct invalid formats where appropriate.",
+            "CONFORMANCE",
+        ),
+        (
+            ("non-alpha name or address",),
+            f"{column_label} contains values that do not match the detected name/address pattern",
+            "This may represent legitimate addresses with numbers or punctuation, or it may mean the semantic type was inferred incorrectly.",
+            "Review the aggregate evidence and confirm whether the field's detected meaning is correct before treating these values as errors.",
+            "CONFORMANCE",
+        ),
+        (
+            ("non-alpha prefixed name",),
+            f"{column_label} begins with values that do not match the detected name pattern",
+            "This often means the field's inferred semantic meaning does not match the actual business content.",
+            "Confirm what this field represents. If it is not actually a name field, adjust the expectation rather than correcting valid data.",
+            "SEMANTIC",
+        ),
         (
             ("null", "missing", "blank", "empty"),
             f"{column_label} has missing values",
@@ -622,7 +749,270 @@ def _hygiene_fingerprint(raw, index):
     return f"hygiene-item:{digest}"
 
 
-def _normalize_hygiene_findings(hygiene_items, previous_findings=None):
+
+def _safe_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+        return int(number) if number.is_integer() else round(number, 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _profile_column_name(item):
+    if not isinstance(item, dict):
+        return None
+    value = (
+        item.get("column_name")
+        or item.get("column")
+        or item.get("name")
+        or item.get("field_name")
+    )
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("column_name")
+    return str(value).strip() if value not in (None, "") else None
+
+
+def _profile_context_for_column(column, profile_columns):
+    if not column or column == "This field":
+        return {}
+
+    match = None
+    for item in profile_columns or []:
+        if _profile_column_name(item) == column:
+            match = item
+            break
+    if not isinstance(match, dict):
+        return {}
+
+    def first(keys):
+        return _first_recursive_value(match, keys)
+
+    context = {
+        "data_type": first(("data_type", "datatype", "type_name")),
+        "semantic_type": first(("semantic_type", "semantic", "semantic_name")),
+        "row_count": _safe_number(first(("record_ct", "row_count", "record_count", "rows"))),
+        "distinct_count": _safe_number(first(("distinct_count", "distinct_ct", "unique_count", "cardinality"))),
+        "null_count": _safe_number(first(("null_count", "null_ct", "missing_count", "blank_count"))),
+        "null_percent": _normalize_percent(first(("null_percent", "null_pct", "missing_percent", "missing_pct"))),
+        "min_value": first(("min_value", "minimum", "min")),
+        "max_value": first(("max_value", "maximum", "max")),
+        "min_length": _safe_number(first(("min_length", "minimum_length", "shortest_length"))),
+        "max_length": _safe_number(first(("max_length", "maximum_length", "longest_length"))),
+        "avg_length": _safe_number(first(("avg_length", "average_length", "mean_length"))),
+    }
+
+    # Look for common/top values without assuming one TestGen schema shape.
+    top_values = []
+    candidates = _recursive_values(
+        match,
+        {
+            "top_values", "frequent_values", "most_common_values",
+            "value_frequencies", "top_value", "most_common",
+        },
+    )
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            for entry in candidate:
+                if isinstance(entry, dict):
+                    value = (
+                        entry.get("value")
+                        or entry.get("name")
+                        or entry.get("key")
+                    )
+                    count = (
+                        entry.get("count")
+                        or entry.get("frequency")
+                        or entry.get("record_count")
+                    )
+                    if value not in (None, ""):
+                        top_values.append(
+                            {"value": value, "count": _safe_number(count)}
+                        )
+                elif entry not in (None, ""):
+                    top_values.append({"value": entry, "count": None})
+        elif isinstance(candidate, dict):
+            for value, count in list(candidate.items())[:8]:
+                top_values.append(
+                    {"value": value, "count": _safe_number(count)}
+                )
+
+    deduped = []
+    seen = set()
+    for item in top_values:
+        marker = repr(item.get("value"))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(item)
+        if len(deduped) >= 5:
+            break
+    context["typical_values"] = deduped
+
+    return {
+        key: value
+        for key, value in context.items()
+        if value not in (None, "", [], {})
+    }
+
+
+
+def _testgen_hygiene_evidence(raw):
+    detail = _first_recursive_value(raw, ("detail", "details"))
+    parsed = _parse_testgen_detail(detail)
+    issue_name = str(raw.get("issue_type_name") or _hygiene_kind(raw))
+    likelihood = raw.get("likelihood")
+    impact = raw.get("impact_dimension")
+    disposition = raw.get("disposition")
+
+    evidence = {
+        "issue_type_name": issue_name,
+        "issue_type_code": raw.get("issue_type"),
+        "detail": detail,
+        "likelihood": likelihood,
+        "impact_dimension": impact,
+        "disposition": disposition,
+        "records_profiled": parsed.get("records"),
+        "empty_string_count": parsed.get("empty_string_count"),
+        "null_count": parsed.get("null_count"),
+        "dummy_value_count": parsed.get("dummy_value_count"),
+        "non_alpha_count": parsed.get("non_alpha_count"),
+        "semantic_type": parsed.get("semantic_type"),
+        "minimum_value": parsed.get("minimum_value"),
+        "patterns": parsed.get("patterns"),
+    }
+
+    affected = _hygiene_count(raw)
+    if affected is not None:
+        evidence["affected_count"] = affected
+        if parsed.get("records"):
+            evidence["affected_percent"] = round(
+                affected / parsed["records"] * 100,
+                1,
+            )
+
+    return {
+        key: value
+        for key, value in evidence.items()
+        if value not in (None, "", [], {})
+    }
+
+
+def _raw_evidence(raw):
+    evidence = _testgen_hygiene_evidence(raw)
+
+    observed = _hygiene_examples(raw)
+    if observed:
+        evidence["observed_values"] = observed
+
+    for label, keys in {
+        "message": ("message", "description", "reason"),
+        "expected": ("expected", "expected_value", "expected_pattern", "expectation"),
+        "actual": ("actual", "actual_value", "observed", "observed_value"),
+        "frequency": ("frequency", "occurrence_count", "value_count"),
+        "percent": ("percent", "percentage", "pct", "rate"),
+    }.items():
+        value = _first_recursive_value(raw, keys)
+        if value not in (None, "", [], {}):
+            evidence[label] = value
+
+    return evidence
+
+
+def _evidence_sufficiency(raw_evidence, profile_context):
+    score = 0
+    reasons = []
+
+    if raw_evidence.get("observed_values"):
+        score += 2
+    elif raw_evidence.get("detail"):
+        score += 1
+        reasons.append(
+            "TestGen returned aggregate evidence, but not example source values."
+        )
+    else:
+        reasons.append("No example values were returned by TestGen.")
+
+    if raw_evidence.get("affected_count") is not None:
+        score += 2
+    else:
+        reasons.append("TestGen did not return an affected-record count.")
+
+    if raw_evidence.get("records_profiled") is not None:
+        score += 1
+
+    if (
+        raw_evidence.get("patterns")
+        or raw_evidence.get("semantic_type")
+        or raw_evidence.get("minimum_value")
+    ):
+        score += 1
+
+    if profile_context:
+        score += 2
+    else:
+        reasons.append(
+            "The TestGen column-profile endpoint did not return statistics for this finding."
+        )
+
+    if profile_context.get("typical_values"):
+        score += 1
+
+    if score >= 5:
+        level = "HIGH"
+        guidance = (
+            "The current TestGen evidence is strong enough to support an informed "
+            "stewardship review, but source verification may still be appropriate."
+        )
+    elif score >= 3:
+        level = "MEDIUM"
+        guidance = (
+            "The current evidence provides useful context, but you should verify the "
+            "source record or confirm the expected business behavior before making a "
+            "high-impact decision."
+        )
+    else:
+        level = "LOW"
+        guidance = (
+            "There is not enough evidence in the current TestGen response to support "
+            "a confident decision by itself. Verify the source record, add notes from "
+            "a business expert, or choose expert review rather than guessing."
+        )
+
+    return {
+        "level": level,
+        "guidance": guidance,
+        "limitations": reasons,
+    }
+
+
+def _attach_finding_evidence(finding, raw, profile_columns):
+    raw_evidence = _raw_evidence(raw)
+    profile_context = _profile_context_for_column(
+        finding.get("column"),
+        profile_columns,
+    )
+    finding["evidence"] = {
+        "testgen": raw_evidence,
+        "profile_context": profile_context,
+        "source_record_context": {
+            "available": False,
+            "message": (
+                "Source-row lookup is not available through the current TestGen "
+                "integration. Use the source system or a future read-only evidence "
+                "connector to verify the exact record when needed."
+            ),
+        },
+        "sufficiency": _evidence_sufficiency(
+            raw_evidence,
+            profile_context,
+        ),
+    }
+    return finding
+
+
+def _normalize_hygiene_findings(hygiene_items, previous_findings=None, profile_columns=None):
     previous = {
         item.get("fingerprint"): item
         for item in (previous_findings or [])
@@ -665,6 +1055,11 @@ def _normalize_hygiene_findings(hygiene_items, previous_findings=None):
             "reviewed_by": prior.get("reviewed_by"),
             "reviewed_at": prior.get("reviewed_at"),
         }
+        _attach_finding_evidence(
+            finding,
+            raw,
+            profile_columns or [],
+        )
         findings.append(finding)
 
     return findings
@@ -702,7 +1097,11 @@ def enrich_hygiene_issue(issue: QualityIssue):
     details = dict(issue.details or {})
     raw = details.get("hygiene_issues") or []
     existing = details.get("steward_findings") or []
-    findings = _normalize_hygiene_findings(raw, existing)
+    findings = _normalize_hygiene_findings(
+        raw,
+        existing,
+        details.get("profile_columns") or [],
+    )
     details["steward_findings"] = findings
     details["finding_summary"] = _hygiene_summary(findings)
     details["finding_count"] = len(findings)
@@ -843,6 +1242,7 @@ def _upsert_hygiene_issue(
     steward_findings = _normalize_hygiene_findings(
         hygiene_items,
         previous_findings,
+        column_items,
     )
     finding_summary = _hygiene_summary(steward_findings)
 
@@ -851,6 +1251,7 @@ def _upsert_hygiene_issue(
         "finding_kind": "PROFILING",
         "latest_run_id": run_id,
         "hygiene_issues": hygiene_items,
+        "profile_columns": column_items,
         "steward_findings": steward_findings,
         "finding_summary": finding_summary,
         "potential_pii": pii_items,

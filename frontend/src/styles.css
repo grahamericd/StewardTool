@@ -78,3 +78,34 @@
 .next-step-callout{display:flex;flex-direction:column;gap:5px;padding:14px 16px;margin:10px 0 14px;border-left:4px solid #2077b4;border-radius:8px;background:#f2f8fc}
 .next-step-callout b{font-size:14px}
 .next-step-callout span{font-size:14px;line-height:1.45;color:#344054}
+
+.finding-decision-context{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0 16px}
+.finding-decision-context>div{border:1px solid #dfe5ec;border-radius:9px;padding:10px 12px;background:#f8fafc}
+.finding-decision-context span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:4px}
+.finding-decision-context b{font-size:14px;overflow-wrap:anywhere}
+.finding-decision-detail{display:grid;gap:10px;margin:0 0 16px}
+.finding-decision-detail>div{padding:12px 14px;border:1px solid #e2e8f0;border-radius:9px;background:#fff}
+.finding-decision-detail p{margin:5px 0 0;line-height:1.45}
+
+.evidence-panel{background:#f8fafc!important;border:1px solid #cfd8e3!important}
+.evidence-panel-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:12px}
+.evidence-panel-head p{margin:3px 0 0}
+.evidence-level{white-space:nowrap;border-radius:999px;padding:5px 9px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.evidence-high{background:#eaf6ec;color:#256029}
+.evidence-medium{background:#fff5db;color:#755600}
+.evidence-low{background:#fff0f0;color:#9c2f2f}
+.evidence-block{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:11px 12px;margin-top:9px}
+.evidence-block p{margin:5px 0 0}
+.evidence-values{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+.evidence-values code,.typical-values code{background:#eef2f6;padding:3px 6px;border-radius:5px;overflow-wrap:anywhere}
+.profile-context-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px}
+.typical-values{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+.typical-values>span{font-size:13px}
+.source-evidence{border-left:4px solid #64748b}
+.evidence-guidance{border-radius:8px;padding:11px 13px;margin-top:10px}
+.evidence-guidance p{margin:5px 0}
+.evidence-guidance ul{margin:7px 0 0;padding-left:20px}
+
+.pattern-list{display:grid;gap:6px;margin-top:8px}
+.pattern-list>span{display:flex;justify-content:space-between;gap:12px;padding:7px 9px;border-radius:7px;background:#f8fafc}
+.pattern-list code{overflow-wrap:anywhere}
