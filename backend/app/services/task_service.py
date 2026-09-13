@@ -10,18 +10,18 @@ from .quality_orchestrator import reconcile_asset_quality_issues
 
 
 TASK_TEXT = {
-    "business_definition": ("CATALOG", "Document the business definition", "Without a clear definition, other users may interpret the asset differently.", "Describe the information in plain business language."),
-    "business_owner": ("OWNERSHIP", "Identify the business owner", "Governance decisions need an accountable business authority.", "Identify the business function that can make decisions about use, meaning, and quality."),
-    "data_steward": ("OWNERSHIP", "Assign a data steward", "A steward coordinates day-to-day governance activities.", "Identify the person or role responsible for maintaining this asset's governance information."),
-    "has_resource": ("CATALOG", "Identify where the information lives", "The catalog should connect the business asset to its real technical or document representations.", "Add at least one database, file, API, PDF collection, spreadsheet, or document library."),
-    "theme": ("METADATA", "Choose a business area", "A business area helps people browse and discover related information.", "Select the business domain that best describes the asset."),
-    "keywords": ("METADATA", "Add search terms", "Search terms make the asset easier to find in the enterprise catalog.", "Add words colleagues would naturally search for."),
-    "update_frequency": ("METADATA", "Document update frequency", "Consumers need to know how current they can expect the information to be.", "Document how often the information changes or is refreshed."),
-    "contact": ("METADATA", "Add a contact point", "Consumers need someone to contact when they have questions.", "Provide a person, role, or mailbox for questions about this asset."),
-    "authoritative_source": ("GOVERNANCE", "Confirm the authoritative source", "When the same information exists in multiple places, consumers need to know which source should be trusted for official decisions.", "Review the linked resources and identify the authoritative representation."),
-    "classification": ("CLASSIFICATION", "Review information classification", "Classification drives appropriate handling and access decisions.", "Review the information contained in the asset and record the appropriate classification."),
-    "retention": ("LIFECYCLE", "Document retention requirements", "Retention obligations determine how long information should be maintained.", "Record the retention period and source authority, or flag it for records-management review."),
-    "quality": ("QUALITY", "Assess data quality", "Cataloged data should be trustworthy enough for its intended use.", "Profile a structured resource and review the quality results and expectations."),
+    "business_definition": ("CATALOG", "Explain what this information means", "Without a clear explanation, other people may interpret the information differently.", "Describe the information in plain business language."),
+    "business_owner": ("OWNERSHIP", "Confirm who owns the business decisions", "Governance decisions need an accountable business authority.", "Identify the business function that can make decisions about use, meaning, and quality."),
+    "data_steward": ("OWNERSHIP", "Confirm who coordinates stewardship", "A steward coordinates day-to-day governance activities.", "Identify the person or role responsible for maintaining this asset's governance information."),
+    "has_resource": ("CATALOG", "Identify where the information lives", "People need to know the real places where this information exists.", "Identify at least one system, file, report, database, document collection, or other place where the information exists."),
+    "theme": ("METADATA", "Confirm the business area", "A business area helps people browse and discover related information.", "Identify the part of the organization’s work this information supports."),
+    "keywords": ("METADATA", "Add search terms", "Search terms make the information easier for coworkers to find.", "Add words colleagues would naturally search for."),
+    "update_frequency": ("METADATA", "Confirm how this information changes", "Consumers need to know how current they can expect the information to be.", "Document how often the information changes or is refreshed."),
+    "contact": ("METADATA", "Confirm who can answer questions", "Consumers need someone to contact when they have questions.", "Provide a person, role, or team that can answer business questions about this information."),
+    "authoritative_source": ("GOVERNANCE", "Confirm the official source", "When the same information exists in multiple places, consumers need to know which source should be trusted for official decisions.", "Review the known locations and confirm which one the organization relies on as the official source."),
+    "classification": ("CLASSIFICATION", "Review how this information should be handled", "Classification drives appropriate handling and access decisions.", "Review the information contained in the asset and record the appropriate classification."),
+    "retention": ("LIFECYCLE", "Confirm how long this information should be kept", "Retention obligations determine how long information should be maintained.", "Record the retention period and source authority, or flag it for records-management review."),
+    "quality": ("QUALITY", "Check whether this information can be trusted", "Information should be trustworthy enough for the way the organization uses it.", "Profile a structured resource and review the quality results and expectations."),
 }
 
 

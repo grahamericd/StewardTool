@@ -4,7 +4,8 @@ import { api } from "./api";
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
-const NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps", "Information Details", "Review Queue", "Publishing History"];
+const PRIMARY_NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps"];
+const REVIEW_NAV = ["Review Queue", "Publishing History"];
 
 function App() {
   const [page, setPage] = useState("Steward Home");
@@ -20,6 +21,7 @@ function App() {
   const [guidedTask, setGuidedTask] = useState(null);
   const [message, setMessage] = useState("");
   const userEmail = USERS[userLabel];
+  const canReview = ["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
 
   async function refresh() {
     const [meData, dash, assetData, systemData, taskData] = await Promise.all([
@@ -39,14 +41,30 @@ function App() {
   return <div className="app">
     <aside>
       <div className="brand">AI Data Steward</div>
-      <div className="tagline">Discover → Describe → Govern → Measure → Resolve → Publish</div>
-      <nav>{NAV.map(n => <button key={n} onClick={() => setPage(n)} className={page===n?"active":""}>{n}</button>)}</nav>
-      <div className="aside-note"><b>Hidden standards</b><p>Users answer ordinary business questions. AI Data Steward produces standards-based metadata behind the scenes.</p></div>
+      <div className="tagline">Guided stewardship, one step at a time.</div>
+
+      <div className="nav-section">
+        <div className="nav-label">Your stewardship</div>
+        <nav>{PRIMARY_NAV.map(n => {
+          const active = page===n || (page==="Information Details" && n==="My Information");
+          return <button key={n} onClick={() => setPage(n)} className={active?"active":""}>{n}</button>;
+        })}</nav>
+      </div>
+
+      {canReview&&<div className="nav-section reviewer-nav">
+        <div className="nav-label">Review & publishing</div>
+        <nav>{REVIEW_NAV.map(n => <button key={n} onClick={() => setPage(n)} className={page===n?"active":""}>{n}</button>)}</nav>
+      </div>}
+
+      <div className="aside-guidance">
+        <b>Not sure where to start?</b>
+        <p>Open My Next Steps. AI Data Steward will guide you to the work that needs attention.</p>
+      </div>
     </aside>
     <main>
       <header>
         <div><div className="org">{me?.organization?.name || "Loading..."}</div><div className="role">{me?.role || ""}</div></div>
-        <label className="role-switch">Demo as<select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select></label>
+        <label className="role-switch demo-control"><span>Demo role</span><select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select><small>Demo only</small></label>
       </header>
       {message && <div className="message">{message}</div>}
       {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} onTask={task=>{
@@ -85,8 +103,8 @@ function App() {
         }
         setPage("Information Details");
       }} />}
-      {page === "Information Details" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
-      {page === "Review Queue" && <ReviewQueue assets={assets} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
+      {page === "Information Details" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} tasks={tasks} role={me?.role} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
+      {page === "Review Queue" && <ReviewQueue assets={assets} role={me?.role} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "Publishing History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
     </main>
   </div>;
@@ -122,7 +140,7 @@ function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAll
     </section>}
 
     <div className="steward-home-head">
-      <div><div className="eyebrow">Steward Home</div><h1>What needs your attention</h1><p className="lead">Work the highest-value item first. You can always ask for help or expert review rather than guessing.</p></div>
+      <div><div className="eyebrow">Steward Home</div><h1>What needs your attention</h1><p className="lead">Work the highest-value item first. When you are unsure, choose “I’m not sure” rather than guessing.</p></div>
       <button onClick={()=>setShowIntro(true)}>What is my role?</button>
     </div>
 
@@ -136,24 +154,24 @@ function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAll
     {next?<section className="panel start-here">
       <div className="eyebrow">Start here</div>
       <h2>{next.title}</h2>
-      <p><b>{next.asset_name}</b> · {next.responsibility||next.governance_domain}</p>
+      <p><b>{next.asset_name}</b> · {responsibilityLabel(next)}</p>
       <div className="guided-task-grid">
         <div><b>Why this matters</b><p>{next.why_it_matters}</p></div>
         <div><b>What you should do</b><p>{next.recommended_action}</p></div>
         <div><b>What this responsibility means</b><p>{next.learn_text}</p></div>
       </div>
-      <button className="primary" onClick={()=>onTask(next)}>{next.source_type==="QUALITY_ISSUE"?"Review findings":"Guide me through this"}</button>
+      <button className="primary" onClick={()=>onTask(next)}>{next.source_type==="QUALITY_ISSUE"?"Review findings":"Start guided task"}</button>
     </section>:<section className="panel success-panel"><h2>You are caught up.</h2><p>Nothing currently needs your attention. AI Data Steward will bring work back here when something changes.</p></section>}
 
     <div className="two-col steward-columns">
       <section className="panel">
         <div className="task-head"><div><div className="eyebrow">Your work</div><h2>Next up</h2></div><button onClick={onAllTasks}>View all</button></div>
-        {now.slice(1,4).length===0&&<div className="empty">No additional tasks right now.</div>}
-        {now.slice(1,4).map(t=><div className="home-task" key={t.id}><div><span className="priority">{t.priority}</span><b>{t.title}</b><small>{t.asset_name} · {t.responsibility||t.governance_domain}</small></div><button onClick={()=>onTask(t)}>Open</button></div>)}
+        {now.slice(1,4).length===0&&<EmptyState title="No additional next steps." text="Your highest-priority work is shown above."/>}
+        {now.slice(1,4).map(t=><div className="home-task" key={t.id}><div><span className="priority">{priorityLabel(t.priority)}</span><b>{t.title}</b><small>{t.asset_name} · {responsibilityLabel(t)}</small></div><button onClick={()=>onTask(t)}>Start</button></div>)}
       </section>
       <section className="panel">
         <div className="task-head"><div><div className="eyebrow">Coordination</div><h2>Waiting on others</h2></div></div>
-        {waiting.length===0&&<div className="empty">Nothing is waiting on someone else.</div>}
+        {waiting.length===0&&<EmptyState title="Nothing is waiting on someone else." text="Items that need another person or team will appear here."/>}
         {waiting.slice(0,4).map(t=><div className="home-task waiting-task" key={t.id}><div><b>{t.title}</b><small>{t.asset_name}</small></div><span>Waiting</span></div>)}
       </section>
     </div>
@@ -175,19 +193,19 @@ function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAll
 function Dashboard({dashboard, assets, onOpen}) {
   if (!dashboard) return <p>Loading...</p>;
   return <>
-    <h1>My Information Inventory</h1>
-    <p className="lead">Your organization’s governed information landscape — systems, informations, metadata, stewardship work, quality, and publication status.</p>
+    <h1>My Information</h1>
+    <p className="lead">See the business information your organization has identified, what still needs attention, and whether it is ready to use and share.</p>
     <div className="metrics six">
-      <Metric label="Systems we know about" value={dashboard.systems}/><Metric label="Information we know about" value={dashboard.assets}/><Metric label="Open Stewardship Tasks" value={dashboard.open_tasks}/><Metric label="Governance Readiness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average Quality" value={`${dashboard.average_quality_score}%`}/><Metric label="Unstructured Resources" value={dashboard.unstructured_resources}/>
+      <Metric label="Systems we know about" value={dashboard.systems}/><Metric label="Information we know about" value={dashboard.assets}/><Metric label="Needs attention" value={dashboard.open_tasks}/><Metric label="Stewardship completeness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average information quality" value={`${dashboard.average_quality_score}%`}/><Metric label="Document/content locations" value={dashboard.unstructured_resources}/>
     </div>
-    <h2>Data assets</h2>
+    <h2>Information</h2>
     <div className="grid">{assets.map(a=><div className="card" key={a.asset.asset_id}>
       <div className="eyebrow">{a.asset.business_domain || "Business information"}</div><h3>{a.asset.name}</h3><p>{a.asset.business_definition || "Definition needs review."}</p>
       <div className="status-line"><span>Stewardship completeness</span><b>{a.readiness.score}%</b></div><div className="progress"><div style={{width:`${a.readiness.score}%`}} /></div>
-      <div className="status-line"><span>Data quality</span><b>{a.quality?.overall_score != null ? `${a.quality.overall_score}%` : "Not assessed"}</b></div>
+      <div className="status-line"><span>Information quality</span><b>{a.quality?.overall_score != null ? `${a.quality.overall_score}%` : "Not assessed"}</b></div>
       <div className="status-line"><span>Open tasks</span><b>{a.task_summary.open}</b></div>
       <div className="status-line"><span>Publication</span><Status value={a.publication.status}/></div>
-      <button className="primary" onClick={()=>onOpen(a.asset.asset_id)}>Open asset</button>
+      <button className="primary" onClick={()=>onOpen(a.asset.asset_id)}>View details</button>
     </div>)}</div>
   </>;
 }
@@ -196,13 +214,13 @@ function Inbox({tasks, onGuide}) {
   const rank = {HIGH:0, MEDIUM:1, LOW:2};
   const sorted = [...tasks].sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9));
   return <>
-    <h1>My Next Steps</h1><p className="lead">Start at the top and use the guided workflow. You do not need to know which governance module to visit, and you should escalate rather than guess when you are unsure.</p>
-    <div className="task-summary">{["HIGH","MEDIUM","LOW"].map(p=><Metric key={p} label={`${p} priority`} value={tasks.filter(t=>t.priority===p).length}/>)}</div>
-    {sorted.length===0 && <div className="empty">Nothing needs attention right now.</div>}
+    <h1>My Next Steps</h1><p className="lead">Start at the top. AI Data Steward will explain why each item matters and guide you to the right decision. If you are unsure, choose that option rather than guessing.</p>
+    <div className="task-summary">{["HIGH","MEDIUM","LOW"].map(p=><Metric key={p} label={priorityLabel(p)} value={tasks.filter(t=>t.priority===p).length}/>)}</div>
+    {sorted.length===0 && <EmptyState title="You’re caught up." text="AI Data Steward will bring work back here when something changes or needs review."/>}
     {sorted.map(t=>{const isQuality=t.source_type==="QUALITY_ISSUE";return <div className={`task task-${t.priority.toLowerCase()}`} key={t.id}>
-      <div className="task-head"><div><div className="eyebrow">{t.governance_domain} · {t.asset_name}</div><h3>{t.title}</h3></div><span className="priority">{t.priority}</span></div>
-      <div className="two-col compact"><div><b>Why this matters</b><p>{isQuality?"TestGen found patterns in this data that need a steward's review. They are observations, not automatic errors.":t.why_it_matters}</p></div><div><b>Recommended next step</b><p>{isQuality?"Open the findings workbench, start with the first item marked Needs review, and work through the findings one at a time.":t.recommended_action}</p></div></div>
-      <button className="primary" onClick={()=>onGuide(t)}>{isQuality?"Review findings":"Guide me"}</button>
+      <div className="task-head"><div><div className="eyebrow">{responsibilityLabel(t)} · {t.asset_name}</div><h3>{t.title}</h3></div><span className="priority">{priorityLabel(t.priority)}</span></div>
+      <div className="two-col compact"><div><b>Why this matters</b><p>{isQuality?"The quality check found patterns that need a steward's review. They are observations, not automatic errors.":t.why_it_matters}</p></div><div><b>Recommended next step</b><p>{isQuality?"Open the findings workbench, start with the first item marked Needs review, and work through the findings one at a time.":t.recommended_action}</p></div></div>
+      <button className="primary" onClick={()=>onGuide(t)}>{isQuality?"Review findings":"Start guided task"}</button>
     </div>})}
   </>;
 }
@@ -358,7 +376,7 @@ function Discover({systems, userEmail, onDone}) {
   const selectedInformation=customInformation.trim()||informationName.trim();
 
   return <><h1>Discover Your Information</h1>
-    <p className="lead">You do not need to know what a “information” is. Start with the system, screen, file, folder, email, document, or report you already use. We will help identify the business information inside it.</p>
+    <p className="lead">You do not need to know data-governance terminology. Start with the system, screen, file, folder, email, document, or report you already use. We will help identify the business information inside it.</p>
     <div className="stepper">{[1,2,3,4,5].map(n=><div key={n} className={step>=n?"step on":"step"}>{n}</div>)}</div>
 
     {step===1&&<section className="panel discover-guide">
@@ -433,43 +451,196 @@ function Discover({systems, userEmail, onDone}) {
           <label>Structure<select value={structureType} onChange={e=>setStructureType(e.target.value)}><option value="STRUCTURED">Structured</option><option value="SEMI_STRUCTURED">Semi-structured</option><option value="UNSTRUCTURED">Unstructured</option></select></label>
         </div>
       </details>
-      <div className="button-row"><button className="primary" disabled={!resourceName.trim()} onClick={addResource}>Save and continue</button></div>
+      <div className="button-row"><button className="primary" disabled={!resourceName.trim()} onClick={addResource}>Finish discovery</button></div>
     </section>}
   </>;
 }
 
-function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId,guidedTask,setGuidedTask}) {
+function Asset360({asset,assets,systems,tasks,role,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId,guidedTask,setGuidedTask}) {
   const [quality,setQuality]=useState(null), [metaKey,setMetaKey]=useState("theme"), [metaValue,setMetaValue]=useState("Professional Licensing"), [gov,setGov]=useState({});
   useEffect(()=>{if(asset){setGov({business_owner:asset.asset.business_owner||"",data_steward:asset.asset.data_steward||"",classification:asset.asset.classification||"",retention_requirement:asset.asset.retention_requirement||"",retention_authority:asset.asset.retention_authority||""});api(`/assets/${asset.asset.asset_id}/quality`,userEmail).then(setQuality)}},[asset?.asset?.asset_id,userEmail]);
-  if(!asset)return <p>No informations yet.</p>; const a=asset.asset;
-  return <><div className="title-row"><div><h1>Information Details</h1><p className="lead">This page brings together what the information means, where it lives, how it is governed, whether it can be trusted, and whether it is ready to share.</p><p className="lead">One place to understand what this information means, where it lives, how it is governed, and whether it can be trusted.</p></div><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select></div>
-    <section className="asset-hero"><div><div className="eyebrow">{a.business_domain||"Business information"}</div><h2>{a.name}</h2><p>{a.business_definition}</p></div><div className="hero-scores"><div><span>Governance</span><strong>{asset.readiness.score}%</strong></div><div><span>Quality</span><strong>{asset.quality?.overall_score != null ? `${asset.quality.overall_score}%` : "—"}</strong></div><Status value={asset.publication.status}/></div></section>
+  if(!asset)return <p>No information has been identified yet.</p>; const a=asset.asset;
+  return <><div className="title-row"><div><h1>Information Details</h1><p className="lead">This page brings together what the information means, where it lives, how it is governed, whether it can be trusted, and whether it is ready to share.</p></div><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select></div>
+    <section className="asset-hero"><div><div className="eyebrow">{a.business_domain||"Business information"}</div><h2>{a.name}</h2><p>{a.business_definition}</p></div><div className="hero-scores"><div><span>Stewardship</span><strong>{asset.readiness.score}%</strong></div><div><span>Information quality</span><strong>{asset.quality?.overall_score != null ? `${asset.quality.overall_score}%` : "—"}</strong></div><Status value={asset.publication.status}/></div></section>
     <div className="tabs">{["Overview","Where It Lives","Help Others Understand It","Governance","Can This Information Be Trusted?","Review & Maintain","Share & Publish"].map(t=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}</div>
-    {tab==="Overview"&&<InformationOverview asset={asset} setTab={setTab}/>}
+    {tab==="Overview"&&<InformationOverview asset={asset} tasks={tasks} setTab={setTab} setGuidedTask={setGuidedTask} setSelectedQualityIssueId={setSelectedQualityIssueId}/>}
     {tab==="Where It Lives"&&<WhereItLives asset={asset} userEmail={userEmail} doAction={doAction}/>}
     {tab==="Help Others Understand It"&&<UnderstandingGuide asset={asset} userEmail={userEmail} doAction={doAction} />}
     {tab==="Governance"&&<GovernanceGuide asset={asset} gov={gov} setGov={setGov} userEmail={userEmail} doAction={doAction} guidedTask={guidedTask} setGuidedTask={setGuidedTask}/>}
     {tab==="Can This Information Be Trusted?"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
     {tab==="Review & Maintain"&&<PeriodicReviewPanel asset={asset} userEmail={userEmail} doAction={doAction} guidedTask={guidedTask} setGuidedTask={setGuidedTask}/>}
-    {tab==="Share & Publish"&&<PublicationPanel asset={asset} userEmail={userEmail} doAction={doAction}/>} 
+    {tab==="Share & Publish"&&<PublicationPanel asset={asset} role={role} userEmail={userEmail} doAction={doAction}/>} 
   </>;
 }
 
-function InformationOverview({asset,setTab}) {
+function InformationOverview({asset,tasks,setTab,setGuidedTask,setSelectedQualityIssueId}) {
   const a=asset.asset;
   const official=asset.resources?.find(r=>r.is_authoritative);
-  return <section className="panel">
-    <div className="eyebrow">At a glance</div>
-    <h2>{a.name}</h2>
-    <p className="lead">{a.business_definition||"A plain-language description still needs to be completed."}</p>
-    <div className="overview-grid">
-      <button onClick={()=>setTab("Where It Lives")}><span>Where it lives</span><b>{asset.resources?.length||0} known location{asset.resources?.length===1?"":"s"}</b><small>{official?`Official source: ${official.name}`:"Official source still needs to be confirmed"}</small></button>
-      <button onClick={()=>setTab("Help Others Understand It")}><span>Understand it</span><b>{a.business_domain||"Business area needs review"}</b><small>Describe it in language coworkers can understand and search for.</small></button>
-      <button onClick={()=>setTab("Governance")}><span>Govern it</span><b>{a.classification||"Classification needs review"}</b><small>Ownership, handling, and retention decisions.</small></button>
-      <button onClick={()=>setTab("Can This Information Be Trusted?")}><span>Trust it</span><b>{asset.quality?.overall_score!=null?`${asset.quality.overall_score}% quality score`:"Quality not yet assessed"}</b><small>Review evidence and quality findings.</small></button>
-      <button onClick={()=>setTab("Review & Maintain")}><span>Keep it current</span><b>Review what changed</b><small>Confirm whether ownership, location, rules, or business use have changed since the last review.</small></button>
+  const assetTasks=(tasks||[]).filter(t=>t.asset_id===a.asset_id);
+  const rank={HIGH:0,MEDIUM:1,LOW:2};
+  const actionable=assetTasks
+    .filter(t=>(t.bucket||"NOW")==="NOW")
+    .sort((x,y)=>(rank[x.priority]??9)-(rank[y.priority]??9));
+  const waiting=assetTasks.filter(t=>(t.bucket||"NOW")==="WAITING");
+  const next=actionable[0]||null;
+  const checks=asset.readiness?.checks||[];
+
+  const complete=(key)=>checks.find(c=>c.key===key)?.complete===true;
+  const descriptionCurrent=complete("business_definition")&&complete("theme");
+  const locationsCurrent=complete("has_resource");
+  const officialCurrent=complete("authoritative_source") || Boolean(official);
+  const ownershipCurrent=complete("business_owner");
+  const classificationCurrent=complete("classification");
+  const retentionCurrent=complete("retention");
+  const qualityCurrent=complete("quality");
+  const publishReady=asset.readiness?.ready_to_submit===true;
+
+  const statusItems=[
+    {
+      key:"description",
+      label:"Description",
+      complete:descriptionCurrent,
+      text:descriptionCurrent?"Business meaning and area are recorded.":"The business description or business area needs attention.",
+      tab:"Help Others Understand It",
+    },
+    {
+      key:"locations",
+      label:"Where it lives",
+      complete:locationsCurrent,
+      text:locationsCurrent?`${asset.resources?.length||0} known location${asset.resources?.length===1?"":"s"} recorded.`:"No known location has been recorded yet.",
+      tab:"Where It Lives",
+    },
+    {
+      key:"official",
+      label:"Official source",
+      complete:officialCurrent,
+      text:officialCurrent?`Confirmed${official?.name?`: ${official.name}`:"."}`:"The location the organization relies on as official still needs confirmation.",
+      tab:"Where It Lives",
+    },
+    {
+      key:"ownership",
+      label:"Ownership",
+      complete:ownershipCurrent,
+      text:ownershipCurrent?`Business owner: ${a.business_owner}`:"The accountable business owner still needs to be identified.",
+      tab:"Governance",
+    },
+    {
+      key:"classification",
+      label:"Handling & sensitivity",
+      complete:classificationCurrent,
+      text:classificationCurrent?`Current classification: ${a.classification}`:"How this information should be handled still needs review.",
+      tab:"Governance",
+    },
+    {
+      key:"retention",
+      label:"Retention",
+      complete:retentionCurrent,
+      text:retentionCurrent?`Requirement recorded: ${a.retention_requirement}`:"Retention requirements have not been confirmed.",
+      tab:"Governance",
+    },
+    {
+      key:"quality",
+      label:"Trust & quality",
+      complete:qualityCurrent,
+      text:qualityCurrent
+        ? `Last quality score: ${asset.quality?.overall_score!=null?`${asset.quality.overall_score}%`:"assessed"}`
+        : "Quality has not yet been assessed for this information.",
+      tab:"Can This Information Be Trusted?",
+    },
+    {
+      key:"publish",
+      label:"Ready to share",
+      complete:publishReady,
+      text:publishReady?"Required stewardship checks are complete.":"Required stewardship work remains before submission.",
+      tab:"Share & Publish",
+    },
+  ];
+
+  function openTask(task){
+    if(!task) return;
+    if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+      setGuidedTask(null);
+      setSelectedQualityIssueId(Number(task.source_reference));
+      setTab("Can This Information Be Trusted?");
+      return;
+    }
+    setSelectedQualityIssueId(null);
+    setGuidedTask(task);
+    if(task.source_type==="PERIODIC_REVIEW"){
+      setTab("Review & Maintain");
+    }else if(task.governance_domain==="QUALITY"){
+      setTab("Can This Information Be Trusted?");
+    }else if(["METADATA","DESCRIPTION"].includes(task.governance_domain) || ["business_definition","theme","keywords","update_frequency","contact"].includes(task.task_type)){
+      setTab("Help Others Understand It");
+    }else if(task.task_type==="has_resource" || task.task_type==="authoritative_source" || task.task_type==="review_change_locations" || task.task_type==="review_change_official_source"){
+      setTab("Where It Lives");
+    }else{
+      setTab("Governance");
+    }
+  }
+
+  return <>
+    {next?<section className="panel overview-next-action">
+      <div className="next-action-label">Recommended next action</div>
+      <div className="next-action-content">
+        <div>
+          <span className={`priority priority-${(next.priority||"MEDIUM").toLowerCase()}`}>{priorityLabel(next.priority)}</span>
+          <h2>{next.title}</h2>
+          <p>{next.why_it_matters}</p>
+          <small>{next.responsibility||"AI Data Steward will guide you through the decision."}</small>
+        </div>
+        <button className="primary next-action-button" onClick={()=>openTask(next)}>{next.source_type==="QUALITY_ISSUE"?"Review findings":"Start guided task"}</button>
+      </div>
+    </section>:<section className="panel overview-all-clear">
+      <div className="completion-mark">✓</div>
+      <div><div className="eyebrow">Current status</div><h2>No immediate stewardship work needs your attention.</h2><p>Use the status below to review the information or make updates when something changes.</p></div>
+    </section>}
+
+    <section className="panel">
+      <div className="task-head">
+        <div><div className="eyebrow">Stewardship status</div><h2>What is complete and what still needs attention</h2><p className="lead">You do not need to choose a governance module. Open any item for context, or follow the recommended next action above.</p></div>
+        <div className="overview-completeness"><strong>{asset.readiness?.score??0}%</strong><span>complete</span></div>
+      </div>
+
+      <div className="stewardship-status-list">
+        {statusItems.map(item=><button key={item.key} type="button" className={item.complete?"stewardship-status complete":"stewardship-status attention"} onClick={()=>setTab(item.tab)}>
+          <span className="status-icon">{item.complete?"✓":"!"}</span>
+          <div><b>{item.label}</b><small>{item.text}</small></div>
+          <span className="status-open">{item.complete?"Review":"Needs attention"} →</span>
+        </button>)}
+      </div>
+    </section>
+
+    <div className="two-col overview-support">
+      <section className="panel">
+        <div className="eyebrow">At a glance</div>
+        <h3>About this information</h3>
+        <p>{a.business_definition||"A plain-language description still needs to be completed."}</p>
+        <div className="mini-facts">
+          <div><span>Business area</span><b>{a.business_domain||"Needs review"}</b></div>
+          <div><span>Known locations</span><b>{asset.resources?.length||0}</b></div>
+          <div><span>Official source</span><b>{official?.name||"Needs confirmation"}</b></div>
+          <div><span>Publication</span><Status value={asset.publication.status}/></div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="eyebrow">Work queue</div>
+        <h3>Other work for this information</h3>
+        {actionable.slice(1,4).length===0&&waiting.length===0&&<div className="empty">No additional tasks for this information.</div>}
+        {actionable.slice(1,4).map(t=><button className="overview-task-row" key={t.id} onClick={()=>openTask(t)}>
+          <span className={`priority priority-${(t.priority||"MEDIUM").toLowerCase()}`}>{priorityLabel(t.priority)}</span>
+          <div><b>{t.title}</b><small>{responsibilityLabel(t)}</small></div>
+          <span>Open →</span>
+        </button>)}
+        {waiting.slice(0,2).map(t=><div className="overview-task-row waiting" key={t.id}>
+          <span className="waiting-pill">Waiting</span>
+          <div><b>{t.title}</b><small>{responsibilityLabel(t)}</small></div>
+          <span>Pending</span>
+        </div>)}
+      </section>
     </div>
-  </section>;
+  </>;
 }
 
 function WhereItLives({asset,userEmail,doAction}) {
@@ -547,7 +718,7 @@ function WhereItLives({asset,userEmail,doAction}) {
         <p className="lead">Imagine a report, spreadsheet, or download shows one value and this location shows another. Which one would staff treat as the official record for a business decision?</p>
         <Choice value={conflictAnswer} setValue={setConflictAnswer} options={[["yes","Yes — this is what we would rely on"],["no","No — another location would be considered official"],["unsure","I’m not sure"]]}/>
         <div className="button-row"><button onClick={()=>setStep(1)}>Back</button>{conflictAnswer==="no"?<button className="primary" onClick={()=>{setSelectedId("");setConflictAnswer("");setStep(1)}}>Choose a different location</button>:<button className="primary" disabled={!conflictAnswer||conflictAnswer==="unsure"} onClick={()=>setStep(3)}>Continue</button>}</div>
-        {conflictAnswer==="unsure"&&<div className="education strong"><b>Do not guess.</b><p>Ask the business owner or the team responsible for the process which location is considered the official record. The real expert-handoff workflow will be added in the next Stage 4.2 increment.</p></div>}
+        {conflictAnswer==="unsure"&&<div className="education strong"><b>Good choice—do not guess.</b><p>Confirm this with the business owner or the team responsible for the process before making an official-source decision.</p></div>}
       </>}
 
       {step===3&&<>
@@ -555,7 +726,7 @@ function WhereItLives({asset,userEmail,doAction}) {
         <p className="lead">Copies can be useful and trustworthy, but they usually should not be labeled the official source if another location is where the record is actually maintained.</p>
         <Choice value={copyAnswer} setValue={setCopyAnswer} options={[["no","No — the official record is maintained here"],["yes","Yes — this is mainly a copy, export, report, or extract"],["unsure","I’m not sure"]]}/>
         <div className="button-row"><button onClick={()=>setStep(2)}>Back</button>{copyAnswer==="yes"?<button className="primary" onClick={()=>{setSelectedId("");setCopyAnswer("");setStep(1)}}>Choose a different location</button>:<button className="primary" disabled={!copyAnswer||copyAnswer==="unsure"} onClick={reviewRecommendation}>Review recommendation</button>}</div>
-        {copyAnswer==="unsure"&&<div className="education strong"><b>Find out before confirming.</b><p>Ask whether this location is the system of record or whether it is generated from another source.</p></div>}
+        {copyAnswer==="unsure"&&<div className="education strong"><b>Good choice—verify it first.</b><p>Ask whether this location is where the official record is maintained or whether it is generated from another source.</p></div>}
       </>}
 
       {step===4&&<>
@@ -773,7 +944,7 @@ function PeriodicReviewPanel({asset,userEmail,doAction,guidedTask,setGuidedTask}
     return <section className="panel">
       <div className="completion-state">
         <div className="completion-mark">✓</div>
-        <div><h2>Periodic review complete</h2><p>{result?.message||"Your review was recorded."}</p></div>
+        <div><h2>Complete — periodic review recorded</h2><p>{result?.message||"Your review was recorded."}</p></div>
       </div>
       {result?.follow_up_tasks?.length>0&&<div className="review-followup-list">
         {result.follow_up_tasks.map(t=><div key={t}><span>Added to My Next Steps</span><b>{t}</b></div>)}
@@ -803,7 +974,7 @@ function PeriodicReviewPanel({asset,userEmail,doAction,guidedTask,setGuidedTask}
     {latest&&<div className="education strong"><b>Most recent review</b><p>{latest.change_summary||"The steward completed the review without additional notes."}</p></div>}
 
     <h3>Review history</h3>
-    {(reviewData?.history||[]).length===0?<div className="empty">No periodic reviews have been completed yet.</div>:<div className="review-history">
+    {(reviewData?.history||[]).length===0?<EmptyState title="No periodic reviews yet." text="Complete the first review when you want to establish a maintenance history."/>:<div className="review-history">
       {reviewData.history.map(r=>{
         const flagged=Object.entries(r.answers||{}).filter(([k,v])=>k==="active_use"?["no","unsure"].includes(v):["changed","unsure"].includes(v)).length;
         return <div key={r.id}><div><b>{new Date(r.reviewed_at).toLocaleDateString()}</b><span>{flagged===0?"No changes identified":`${flagged} area${flagged===1?"":"s"} needed follow-up`}</span></div><small>Next review: {new Date(r.next_review_due).toLocaleDateString()}</small></div>;
@@ -816,13 +987,13 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
   const a=asset.asset;
   const existing=asset.metadata||{};
   const [step,setStep]=useState(1);
-  const [businessArea,setBusinessArea]=useState(existing.business_area||existing.business_domain||"");
+  const [businessArea,setBusinessArea]=useState(existing.theme||a.business_domain||"");
   const [audienceNeed,setAudienceNeed]=useState("");
   const [searchTerms,setSearchTerms]=useState(
-    Array.isArray(existing.search_terms) ? existing.search_terms.join(", ") : (existing.search_terms||"")
+    Array.isArray(existing.keyword) ? existing.keyword.join(", ") : (existing.keyword||"")
   );
   const [updatePattern,setUpdatePattern]=useState(existing.update_frequency||"");
-  const [contactPoint,setContactPoint]=useState(existing.contact_point||"");
+  const [contactPoint,setContactPoint]=useState(existing.contact||"");
   const [businessPurpose,setBusinessPurpose]=useState(a.business_definition||"");
   const [suggestedTerms,setSuggestedTerms]=useState([]);
 
@@ -859,15 +1030,15 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
 
   async function save(){
     const payload={
-      business_area: businessArea.trim()||null,
+      business_definition: businessPurpose.trim(),
+      business_area: businessArea.trim(),
       search_terms: searchTerms.split(",").map(x=>x.trim()).filter(Boolean),
-      update_frequency: updatePattern||null,
-      contact_point: contactPoint.trim()||null
+      update_frequency: updatePattern,
+      contact_point: contactPoint.trim()
     };
 
-    // Existing API endpoint used by the previous metadata form.
     await doAction(
-      ()=>api(`/assets/${a.asset_id}/metadata`,userEmail,{
+      ()=>api(`/assets/${a.asset_id}/understanding`,userEmail,{
         method:"PATCH",
         body:JSON.stringify(payload)
       }),
@@ -881,7 +1052,7 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
       <div>
         <div className="eyebrow">Guided task · Help others understand it</div>
         <h2>Describe this information in business language</h2>
-        <p className="lead">You do not need to know metadata standards. Answer the same kinds of questions you would answer for a coworker who had never seen this information before.</p>
+        <p className="lead">Explain this information the same way you would to a coworker who had never seen it before. AI Data Steward will organize your answers for you.</p>
       </div>
       <span>Step {step} of 6</span>
     </div>
@@ -950,7 +1121,7 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
 
       <details className="advanced-details">
         <summary>What information will AI Data Steward record?</summary>
-        <p className="muted">Behind the scenes, these answers become structured description and discoverability information used by the organization-wide information catalog. You do not need to manage those fields directly.</p>
+        <p className="muted">AI Data Steward organizes these answers so the information can be understood and found across the organization. You do not need to manage the underlying fields yourself.</p>
       </details>
     </>}
 
@@ -958,8 +1129,8 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
       <div className="completion-state">
         <div className="completion-mark">✓</div>
         <div>
-          <h3>This information is easier for others to understand and find.</h3>
-          <p>AI Data Steward recorded the business area, discovery terms, update pattern, and business contact without requiring you to work with metadata standards directly.</p>
+          <h3>Complete — others can understand and find this information more easily.</h3>
+          <p>AI Data Steward recorded the business area, discovery terms, update pattern, and business contact so other people can understand and find this information.</p>
         </div>
       </div>
       <div className="button-row"><button onClick={()=>setStep(1)}>Review or update these answers</button></div>
@@ -1195,62 +1366,288 @@ function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,s
   async function refreshAction(fn,msg){ await doAction(fn,msg); }
 
   return <>
-    <section className="panel">
-      <div className="eyebrow">Quality engine · DataKitchen TestGen</div>
-      <h2>Assess Data Quality</h2>
-      <p className="muted">AI Data Steward remains the steward experience. TestGen performs profiling and test execution underneath it.</p>
-      <div className="engine-banner"><div><b>{quality?.engine_mode==="real"?"Real TestGen integration":"Demo integration mode"}</b><span>{quality?.engine_mode==="real"?`${engineStatus?.base_url||"TestGen API"} · ${engineStatus?.auth_mode||"authentication not loaded"}`:"Uses a deterministic TestGen-shaped simulator so you can validate the full workflow before connecting TestGen."}</span></div><Status value={link?.sync_status||"NOT LINKED"}/></div>
-      {resourceId&&<div className="quality-context"><div><span>Business asset</span><b>{asset.asset.name}</b></div><div><span>Cataloged resource</span><b>{structured.find(r=>r.resource_id===Number(resourceId))?.name||"—"}</b></div><div><span>Governed source</span><b>{link?.source_mapping?.qualified_name||link?.external_table_name||"Not mapped"}</b></div></div>}
-      <label>Structured resource to assess</label>
-      <select value={resourceId} onChange={e=>setResourceId(e.target.value)}>{structured.map(r=><option key={r.resource_id} value={r.resource_id}>{r.name} · {r.system||"No system"}</option>)}</select>
-      {structured.length===0&&<div className="education strong"><b>No structured resource is available.</b><p>Quality profiling applies to structured resources. Unstructured PDFs and document libraries remain governed through metadata, classification, retention, and other stewardship workflows.</p></div>}
-      {quality?.engine_mode==="real"&&<details className="config-box" open><summary>Governed source & TestGen mapping</summary><p className="muted">Connect this cataloged resource to the real technical source TestGen assesses. Database credentials stay in TestGen; AI Data Steward stores only the governed source identity and TestGen object IDs.</p><div className="mapping-section"><div className="eyebrow">Real governed source</div><div className="mapping-grid"><label>TestGen connection name<input value={sourceConnectionName} onChange={e=>setSourceConnectionName(e.target.value)} placeholder="e.g. Data_Lab"/></label><label>Database<input value={sourceDatabase} onChange={e=>setSourceDatabase(e.target.value)} placeholder="e.g. corporate_registry"/></label><label>Schema<input value={sourceSchema} onChange={e=>setSourceSchema(e.target.value)} placeholder="public"/></label><label>Table<input value={sourceTable} onChange={e=>setSourceTable(e.target.value)} placeholder="corporate_data"/></label></div></div><div className="mapping-section"><div className="eyebrow">TestGen execution mapping</div><div className="mapping-grid"><label>Project code<input value={projectCode} onChange={e=>setProjectCode(e.target.value)} placeholder={engineStatus?.project_code||"DEFAULT"}/></label><label>Table group ID<input value={tableGroupId} onChange={e=>setTableGroupId(e.target.value)} placeholder={engineStatus?.table_group_id||"TestGen table-group UUID"}/></label><label>Test suite ID<input value={testSuiteId} onChange={e=>setTestSuiteId(e.target.value)} placeholder={engineStatus?.test_suite_id||"TestGen test-suite UUID"}/></label></div>{(link?.source_mapping?.qualified_name||link?.external_table_name)&&<div className="source-summary"><b>Currently mapped source</b><span>{[link?.source_mapping?.connection_name,link?.source_mapping?.database,link?.source_mapping?.qualified_name||link?.external_table_name].filter(Boolean).join(" → ")}</span></div>}</div><div className="button-row"><button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/link`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId),project_code:projectCode||engineStatus?.project_code,table_group_id:tableGroupId||engineStatus?.table_group_id,test_suite_id:testSuiteId||engineStatus?.test_suite_id,source_connection_name:sourceConnectionName,source_database:sourceDatabase,source_schema:sourceSchema,source_table:sourceTable,external_table_name:sourceTable?`${sourceSchema?`${sourceSchema}.`:""}${sourceTable}`:structured.find(r=>r.resource_id===Number(resourceId))?.name})}),"Governed source and TestGen mapping saved.")}>Save source mapping</button><button className="primary" onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/test-connection`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Authenticated TestGen connection succeeded.")}>Test connection</button></div></details>}
-      <div className="button-row"><button className="primary" disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/assess`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Data quality assessment completed. Review the profiling findings below.")}>Assess Data Quality</button><button disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/run`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),quality?.engine_mode==="real"?"TestGen quality checks ran. Current failures were synchronized into stewardship work.":"Approved quality checks ran. Any failures were converted into stewardship work.")}>{quality?.engine_mode==="real"?"Run Quality Checks":"Run Approved Checks"}</button></div>
+    <section className="panel quality-trust-first">
+      <div className="eyebrow">Trust & quality</div>
+      <h2>Can this information be trusted for its intended use?</h2>
+      <p className="lead">AI Data Steward checks the available evidence and turns technical findings into decisions a steward can work through. You do not need to understand the quality engine to use this page.</p>
+
+      <div className="trust-summary-grid">
+        <div>
+          <span>Current quality</span>
+          <strong>{q?.overall_score!=null?`${q.overall_score}%`:"Not assessed"}</strong>
+          <small>{q?.profiled_at?`Last assessed ${new Date(q.profiled_at).toLocaleDateString()}`:"Run a check when you are ready."}</small>
+        </div>
+        <div>
+          <span>Needs review</span>
+          <strong>{openIssues.length}</strong>
+          <small>{openIssues.length===0?"No unresolved findings.":"Open findings need a stewardship decision."}</small>
+        </div>
+        <div>
+          <span>Source status</span>
+          <strong>{link?.sync_status==="CONFIGURED"?"Ready":link?.sync_status||"Not configured"}</strong>
+          <small>{link?.source_mapping?.qualified_name||link?.external_table_name||"A technical source can be connected when needed."}</small>
+        </div>
+      </div>
+
+      <div className="button-row trust-actions">
+        <button className="primary" disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/assess`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Information check completed. Review any findings that need a stewardship decision.")}>Check this information</button>
+        <button disabled={!resourceId} onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/run`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Approved quality checks ran. Any findings that need attention were added to stewardship work.")}>Run approved checks</button>
+      </div>
+
+      {structured.length===0&&<div className="education strong"><b>Automated checking is not available for this type of information.</b><p>Documents and document libraries are still covered by description, classification, retention, ownership, and other stewardship work.</p></div>}
+
+      {structured.length>1&&<details className="advanced-details">
+        <summary>Choose which structured location to check</summary>
+        <label>Location to check
+          <select value={resourceId} onChange={e=>setResourceId(e.target.value)}>{structured.map(r=><option key={r.resource_id} value={r.resource_id}>{r.name} · {r.system||"No system"}</option>)}</select>
+        </label>
+      </details>}
+
+      {quality?.engine_mode==="real"&&<details className="config-box technical-setup">
+        <summary>Technical setup</summary>
+        <p className="muted">This section is intended for technical or administrative users. It connects the governed information location to the quality engine. Stewards normally do not need to change these settings.</p>
+
+        <div className="technical-status-line">
+          <div><span>Quality engine</span><b>DataKitchen TestGen</b></div>
+          <div><span>Connection</span><b>{engineStatus?.auth_mode||"Not loaded"}</b></div>
+          <div><span>Mapping</span><b>{link?.sync_status||"Not linked"}</b></div>
+        </div>
+
+        {resourceId&&<div className="quality-context">
+          <div><span>Information</span><b>{asset.asset.name}</b></div>
+          <div><span>Location</span><b>{structured.find(r=>r.resource_id===Number(resourceId))?.name||"—"}</b></div>
+          <div><span>Technical source</span><b>{link?.source_mapping?.qualified_name||link?.external_table_name||"Not mapped"}</b></div>
+        </div>}
+
+        <label>Structured location to configure</label>
+        <select value={resourceId} onChange={e=>setResourceId(e.target.value)}>{structured.map(r=><option key={r.resource_id} value={r.resource_id}>{r.name} · {r.system||"No system"}</option>)}</select>
+
+        <div className="mapping-section">
+          <div className="eyebrow">Source identity</div>
+          <div className="mapping-grid">
+            <label>TestGen connection name<input value={sourceConnectionName} onChange={e=>setSourceConnectionName(e.target.value)} placeholder="e.g. Data_Lab"/></label>
+            <label>Database<input value={sourceDatabase} onChange={e=>setSourceDatabase(e.target.value)} placeholder="e.g. corporate_registry"/></label>
+            <label>Schema<input value={sourceSchema} onChange={e=>setSourceSchema(e.target.value)} placeholder="public"/></label>
+            <label>Table<input value={sourceTable} onChange={e=>setSourceTable(e.target.value)} placeholder="corporate_data"/></label>
+          </div>
+        </div>
+
+        <div className="mapping-section">
+          <div className="eyebrow">TestGen execution mapping</div>
+          <div className="mapping-grid">
+            <label>Project code<input value={projectCode} onChange={e=>setProjectCode(e.target.value)} placeholder={engineStatus?.project_code||"DEFAULT"}/></label>
+            <label>Table group ID<input value={tableGroupId} onChange={e=>setTableGroupId(e.target.value)} placeholder={engineStatus?.table_group_id||"TestGen table-group UUID"}/></label>
+            <label>Test suite ID<input value={testSuiteId} onChange={e=>setTestSuiteId(e.target.value)} placeholder={engineStatus?.test_suite_id||"TestGen test-suite UUID"}/></label>
+          </div>
+          {(link?.source_mapping?.qualified_name||link?.external_table_name)&&<div className="source-summary"><b>Currently mapped source</b><span>{[link?.source_mapping?.connection_name,link?.source_mapping?.database,link?.source_mapping?.qualified_name||link?.external_table_name].filter(Boolean).join(" → ")}</span></div>}
+        </div>
+
+        <div className="button-row">
+          <button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/link`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId),project_code:projectCode||engineStatus?.project_code,table_group_id:tableGroupId||engineStatus?.table_group_id,test_suite_id:testSuiteId||engineStatus?.test_suite_id,source_connection_name:sourceConnectionName,source_database:sourceDatabase,source_schema:sourceSchema,source_table:sourceTable,external_table_name:sourceTable?`${sourceSchema?`${sourceSchema}.`:""}${sourceTable}`:structured.find(r=>r.resource_id===Number(resourceId))?.name})}),"Technical source mapping saved.")}>Save technical setup</button>
+          <button onClick={()=>refreshAction(()=>api(`/assets/${asset.asset.asset_id}/quality/test-connection`,userEmail,{method:"POST",body:JSON.stringify({resource_id:Number(resourceId)})}),"Quality engine connection succeeded.")}>Test connection</button>
+        </div>
+      </details>}
+
+      {quality?.engine_mode!=="real"&&<details className="advanced-details">
+        <summary>Technical setup</summary>
+        <p className="muted">This demo is using the built-in quality simulator. Technical quality-engine configuration is not required.</p>
+      </details>}
     </section>
 
     <section className="panel">
-      <div className="eyebrow">Can we trust it?</div><h2>Quality Health</h2>
-      {q?<><div className="quality-score"><strong>{q.overall_score}%</strong><span>Overall quality · {q.source}</span></div><div className="quality-grid"><Metric label="Completeness" value={q.completeness_score!=null?`${q.completeness_score}%`:"—"}/><Metric label="Validity" value={q.validity_score!=null?`${q.validity_score}%`:"—"}/><Metric label="Uniqueness" value={q.uniqueness_score!=null?`${q.uniqueness_score}%`:"—"}/><Metric label="Consistency" value={q.consistency_score!=null?`${q.consistency_score}%`:"—"}/><Metric label="Timeliness" value={q.timeliness_score!=null?`${q.timeliness_score}%`:"—"}/></div></>:<p>No quality assessment has been recorded.</p>}
+      <div className="eyebrow">Evidence summary</div><h2>What the latest check tells us</h2>
+      {q?<><div className="quality-score"><strong>{q.overall_score}%</strong><span>Overall information quality</span></div><div className="quality-grid"><Metric label="Completeness" value={q.completeness_score!=null?`${q.completeness_score}%`:"—"}/><Metric label="Validity" value={q.validity_score!=null?`${q.validity_score}%`:"—"}/><Metric label="Uniqueness" value={q.uniqueness_score!=null?`${q.uniqueness_score}%`:"—"}/><Metric label="Consistency" value={q.consistency_score!=null?`${q.consistency_score}%`:"—"}/><Metric label="Timeliness" value={q.timeliness_score!=null?`${q.timeliness_score}%`:"—"}/></div></>:<p>No quality assessment has been recorded.</p>}
     </section>
 
-    <section className="panel"><h2>Quality expectations</h2><p className="muted">{quality?.engine_mode==="real"?"The mapped TestGen test suite is the execution source. AI Data Steward converts failures into guided stewardship work.":"TestGen discovers patterns and candidate checks. The steward decides which expectations should become governed rules."}</p>{quality?.rules?.length?quality.rules.map(r=><div className="rule" key={r.id}><div><b>{r.plain_language_rule}</b><span>{friendlyType(r.rule_type)} · {r.status}</span>{r.latest_result&&<small>{r.latest_result.failed_count||0} failed in the latest run</small>}</div><div className="button-row mini">{r.status==="PROPOSED"&&<><button className="primary" onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"APPROVED"})}),"Quality expectation approved.")}>Approve</button><button onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"REJECTED"})}),"Quality expectation rejected.")}>Reject</button></>}</div></div>):<p>Run an assessment to generate suggested expectations.</p>}</section>
+    <section className="panel"><h2>What should this information reliably do?</h2><p className="muted">These expectations describe what the business needs to be true about the information. AI Data Steward turns failed checks into guided stewardship work rather than treating them as automatic errors.</p>{quality?.rules?.length?quality.rules.map(r=><div className="rule" key={r.id}><div><b>{r.plain_language_rule}</b><span>{friendlyType(r.rule_type)} · {r.status}</span>{r.latest_result&&<small>{r.latest_result.failed_count||0} failed in the latest run</small>}</div><div className="button-row mini">{r.status==="PROPOSED"&&<><button className="primary" onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"APPROVED"})}),"Quality expectation approved.")}>Approve</button><button onClick={()=>refreshAction(()=>api(`/quality/rules/${r.id}/status`,userEmail,{method:"PATCH",body:JSON.stringify({status:"REJECTED"})}),"Quality expectation rejected.")}>Reject</button></>}</div></div>):<p>Check this information to identify suggested expectations.</p>}</section>
 
-    <section className="panel"><h2>Quality issues requiring a stewardship decision</h2><p className="muted">Profiling findings describe characteristics worth reviewing. Test failures show where an expected quality check did not pass. Neither automatically means the data is wrong.</p>{openIssues.length===0&&<div className="empty">No unresolved quality issues.</div>}{openIssues.map(i=>{const evidence=i.details?.evidence||{};const samples=evidence.sample_values?.length?evidence.sample_values:i.details?.sample_values;const isProfile=i.issue_type==="HYGIENE_FINDING";const summary=i.details?.finding_summary||{};return <div className={`quality-issue severity-${i.severity.toLowerCase()}`} key={i.id}><div className="task-head"><div><div className="eyebrow">{i.source} · {isProfile?"PROFILING FINDING":"QUALITY CHECK FAILURE"}</div><h3>{i.title}</h3></div><span className="priority">{i.severity}</span></div><p>{i.description}</p>{isProfile&&<><div className="finding-summary-grid"><Metric label="Needs review" value={summary.pending??i.details?.finding_count??0}/><Metric label="Reviewed" value={summary.resolved??0}/><Metric label="Expert review" value={summary.escalated??0}/><Metric label="Potential PII" value={i.details?.potential_pii_count||0}/></div><p className="muted">You do not need to understand TestGen terminology. AI Data Steward translates each finding into what it means, why it matters, and what to do next.</p></>}{!isProfile&&<div className="evidence-grid">{evidence.status&&<Metric label="Result" value={evidence.status}/>} {evidence.test_type&&<Metric label="Check type" value={friendlyType(evidence.test_type)}/>} {evidence.evaluated_count!=null&&<Metric label="Records evaluated" value={Number(evidence.evaluated_count).toLocaleString()}/>} {i.failed_count!=null&&<Metric label="Records affected" value={i.failed_count.toLocaleString()}/>} {evidence.score!=null&&<Metric label="Check score" value={`${evidence.score}%`}/>}</div>}{evidence.columns?.length>0&&<p><b>Fields:</b> {evidence.columns.join(", ")}</p>}{samples?.length>0&&<div className="sample-values"><b>Example evidence</b><span>{samples.map(v=>v===null?"(missing)":String(v)).join(" · ")}</span></div>}<button className="primary" onClick={()=>{setSelectedQualityIssueId(i.id);setNotes("");if(isProfile){setHygieneIssue(i);setDecisionIssue(null);setSelectedHygieneFinding(null);window.setTimeout(()=>document.getElementById("profiling-workbench")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}else{setDecisionIssue(i);setHygieneIssue(null);window.setTimeout(()=>document.getElementById("guided-investigation")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}}}>{isProfile?"Review findings":"Guide Me"}</button></div>})}</section>
+    <section className="panel"><h2>Findings that need a stewardship decision</h2><p className="muted">A finding means something is worth reviewing. It does not automatically mean the information is wrong. Use the evidence and business context to decide what it means.</p>{openIssues.length===0&&<EmptyState title="No findings need a decision." text="New findings will appear here after future checks when they need stewardship review."/>}{openIssues.map(i=>{const evidence=i.details?.evidence||{};const samples=evidence.sample_values?.length?evidence.sample_values:i.details?.sample_values;const isProfile=i.issue_type==="HYGIENE_FINDING";const summary=i.details?.finding_summary||{};return <div className={`quality-issue severity-${i.severity.toLowerCase()}`} key={i.id}><div className="task-head"><div><div className="eyebrow">{i.source} · {isProfile?"PROFILING FINDING":"QUALITY CHECK FAILURE"}</div><h3>{i.title}</h3></div><span className="priority">{i.severity}</span></div><p>{i.description}</p>{isProfile&&<><div className="finding-summary-grid"><Metric label="Needs review" value={summary.pending??i.details?.finding_count??0}/><Metric label="Reviewed" value={summary.resolved??0}/><Metric label="Expert review" value={summary.escalated??0}/><Metric label="Potential PII" value={i.details?.potential_pii_count||0}/></div><p className="muted">You do not need to understand the quality engine’s terminology. AI Data Steward translates each finding into what it means, why it matters, and what to do next.</p></>}{!isProfile&&<div className="evidence-grid">{evidence.status&&<Metric label="Result" value={evidence.status}/>} {evidence.test_type&&<Metric label="Check type" value={friendlyType(evidence.test_type)}/>} {evidence.evaluated_count!=null&&<Metric label="Records evaluated" value={Number(evidence.evaluated_count).toLocaleString()}/>} {i.failed_count!=null&&<Metric label="Records affected" value={i.failed_count.toLocaleString()}/>} {evidence.score!=null&&<Metric label="Check score" value={`${evidence.score}%`}/>}</div>}{evidence.columns?.length>0&&<p><b>Fields:</b> {evidence.columns.join(", ")}</p>}{samples?.length>0&&<div className="sample-values"><b>Example evidence</b><span>{samples.map(v=>v===null?"(missing)":String(v)).join(" · ")}</span></div>}<button className="primary" onClick={()=>{setSelectedQualityIssueId(i.id);setNotes("");if(isProfile){setHygieneIssue(i);setDecisionIssue(null);setSelectedHygieneFinding(null);window.setTimeout(()=>document.getElementById("profiling-workbench")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}else{setDecisionIssue(i);setHygieneIssue(null);window.setTimeout(()=>document.getElementById("guided-investigation")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}}}>{isProfile?"Review findings":"Guide Me"}</button></div>})}</section>
 
-    {hygieneIssue&&<section id="profiling-workbench" className="panel guide-panel"><div className="eyebrow">Profiling findings workbench</div><h2>Review findings one at a time</h2><div className="next-step-callout"><b>What to do next</b><span>Start with the first item marked <strong>Needs review</strong>. Read what TestGen found, check why it matters, then choose the stewardship decision that best matches the business reality. Work through the list one finding at a time.</span></div><p className="muted">TestGen found patterns in the data. These are observations, not automatic errors.</p><div className="finding-progress"><b>{hygieneIssue.details?.finding_summary?.pending??0} need review</b><span>{hygieneIssue.details?.finding_summary?.resolved??0} reviewed · {hygieneIssue.details?.finding_summary?.escalated??0} sent for expert review</span></div><div className="finding-list">{(hygieneIssue.details?.steward_findings||[]).map(f=><div key={f.fingerprint} className={`steward-finding status-${(f.review_status||"PENDING").toLowerCase()}`}><div className="task-head"><div><div className="eyebrow">{f.column} · {friendlyType(f.category)}</div><h3>{f.title}</h3></div><span className="finding-status">{f.review_status==="RESOLVED"?"Reviewed":f.review_status==="ESCALATED"?"Expert review":"Needs review"}</span></div><p><b>Why it matters</b><br/>{f.why_it_matters}</p><p><b>Recommended next step</b><br/>{f.recommended_action}</p>{f.affected_count!=null&&<p><b>{Number(f.affected_count).toLocaleString()}</b> affected records</p>}{f.examples?.length>0&&<div className="sample-values"><b>Example evidence</b><span>{f.examples.map(v=>v===null?"(missing)":String(v)).join(" · ")}</span></div>}<details className="technical-detail"><summary>What TestGen called this</summary><code>{f.testgen_finding}</code></details><button className={f.review_status==="PENDING"?"primary":""} onClick={()=>{setSelectedHygieneFinding(f);setNotes(f.notes||"");window.setTimeout(()=>document.getElementById("finding-decision")?.scrollIntoView({behavior:"smooth",block:"center"}),100)}}>{f.review_status==="PENDING"?"Review this finding":"Review decision"}</button></div>)}</div></section>}
+    {hygieneIssue&&<section id="profiling-workbench" className="panel guide-panel"><div className="eyebrow">Profiling findings workbench</div><h2>Review findings one at a time</h2><div className="next-step-callout"><b>What to do next</b><span>Start with the first item marked <strong>Needs review</strong>. Read what TestGen found, check why it matters, then choose the stewardship decision that best matches the business reality. Work through the list one finding at a time.</span></div><p className="muted">The quality check found patterns in the information. These are observations, not automatic errors.</p><div className="finding-progress"><b>{hygieneIssue.details?.finding_summary?.pending??0} need review</b><span>{hygieneIssue.details?.finding_summary?.resolved??0} reviewed · {hygieneIssue.details?.finding_summary?.escalated??0} sent for expert review</span></div><div className="finding-list">{(hygieneIssue.details?.steward_findings||[]).map(f=><div key={f.fingerprint} className={`steward-finding status-${(f.review_status||"PENDING").toLowerCase()}`}><div className="task-head"><div><div className="eyebrow">{f.column} · {friendlyType(f.category)}</div><h3>{f.title}</h3></div><span className="finding-status">{f.review_status==="RESOLVED"?"Reviewed":f.review_status==="ESCALATED"?"Expert review":"Needs review"}</span></div><p><b>Why it matters</b><br/>{f.why_it_matters}</p><p><b>Recommended next step</b><br/>{f.recommended_action}</p>{f.affected_count!=null&&<p><b>{Number(f.affected_count).toLocaleString()}</b> affected records</p>}{f.examples?.length>0&&<div className="sample-values"><b>Example evidence</b><span>{f.examples.map(v=>v===null?"(missing)":String(v)).join(" · ")}</span></div>}<details className="technical-detail"><summary>Technical finding details</summary><code>{f.testgen_finding}</code></details><button className={f.review_status==="PENDING"?"primary":""} onClick={()=>{setSelectedHygieneFinding(f);setNotes(f.notes||"");window.setTimeout(()=>document.getElementById("finding-decision")?.scrollIntoView({behavior:"smooth",block:"center"}),100)}}>{f.review_status==="PENDING"?"Review this finding":"Review decision"}</button></div>)}</div></section>}
     {hygieneIssue&&selectedHygieneFinding&&<section id="finding-decision" className="panel guide-panel finding-decision"><div className="eyebrow">Guided finding review</div><h2>{selectedHygieneFinding.title}</h2><div className="finding-decision-context"><div><span>Field</span><b>{selectedHygieneFinding.column||"—"}</b></div><div><span>Category</span><b>{friendlyType(selectedHygieneFinding.category||"PROFILE")}</b></div><div><span>Status</span><b>{selectedHygieneFinding.review_status==="RESOLVED"?"Reviewed":selectedHygieneFinding.review_status==="ESCALATED"?"Expert review":"Needs review"}</b></div>{selectedHygieneFinding.affected_count!=null&&<div><span>Affected records</span><b>{Number(selectedHygieneFinding.affected_count).toLocaleString()}</b></div>}{selectedHygieneFinding.confidence&&<div><span>TestGen confidence</span><b>{selectedHygieneFinding.confidence}</b></div>}</div><div className="finding-decision-detail"><div><b>What TestGen found</b><p>{selectedHygieneFinding.testgen_finding||"Profiling observation"}</p></div><div className="evidence-panel"><div className="evidence-panel-head"><div><b>Evidence available for this decision</b><p className="muted">Review the evidence before choosing a stewardship decision.</p></div><span className={`evidence-level evidence-${(selectedHygieneFinding.evidence?.sufficiency?.level||"LOW").toLowerCase()}`}>{selectedHygieneFinding.evidence?.sufficiency?.level||"LOW"} evidence</span></div>{selectedHygieneFinding.evidence?.testgen?.observed_values?.length>0&&<div className="evidence-block"><b>Observed value{selectedHygieneFinding.evidence.testgen.observed_values.length===1?"":"s"}</b><div className="evidence-values">{selectedHygieneFinding.evidence.testgen.observed_values.map((v,idx)=><code key={idx}>{v===null?"(missing)":String(v)}</code>)}</div></div>}{selectedHygieneFinding.evidence?.testgen?.detail&&<div className="evidence-block"><b>TestGen evidence</b><p>{selectedHygieneFinding.evidence.testgen.detail}</p>{selectedHygieneFinding.evidence.testgen.records_profiled!=null&&<p><b>{Number(selectedHygieneFinding.evidence.testgen.records_profiled).toLocaleString()}</b> records were profiled.</p>}</div>}{selectedHygieneFinding.evidence?.testgen?.affected_count!=null&&<div className="evidence-block"><b>Estimated impact</b><p><b>{Number(selectedHygieneFinding.evidence.testgen.affected_count).toLocaleString()}</b> records match this finding{selectedHygieneFinding.evidence.testgen.affected_percent!=null?` (${selectedHygieneFinding.evidence.testgen.affected_percent}%)`:""}.</p></div>}{selectedHygieneFinding.evidence?.testgen?.patterns?.length>0&&<div className="evidence-block"><b>Observed format distribution</b><div className="pattern-list">{selectedHygieneFinding.evidence.testgen.patterns.map((p,idx)=><span key={idx}><code>{p.pattern}</code><b>{Number(p.count).toLocaleString()}</b></span>)}</div></div>}{selectedHygieneFinding.evidence?.testgen?.semantic_type&&<div className="evidence-block"><b>Detected semantic type</b><p>{selectedHygieneFinding.evidence.testgen.semantic_type}</p></div>}{selectedHygieneFinding.evidence?.testgen?.minimum_value&&<div className="evidence-block"><b>Minimum observed value</b><p><code>{selectedHygieneFinding.evidence.testgen.minimum_value}</code></p></div>}{selectedHygieneFinding.evidence?.testgen?.affected_count!=null&&<div className="evidence-block"><b>How common is it?</b><p>{Number(selectedHygieneFinding.evidence.testgen.affected_count).toLocaleString()} affected record{Number(selectedHygieneFinding.evidence.testgen.affected_count)===1?"":"s"}{selectedHygieneFinding.evidence?.profile_context?.row_count?` out of ${Number(selectedHygieneFinding.evidence.profile_context.row_count).toLocaleString()} profiled records`:""}.</p></div>}{Object.keys(selectedHygieneFinding.evidence?.profile_context||{}).length>0&&<div className="evidence-block"><b>Profile context for {selectedHygieneFinding.column}</b><div className="profile-context-grid">{selectedHygieneFinding.evidence.profile_context.data_type&&<Metric label="Data type" value={selectedHygieneFinding.evidence.profile_context.data_type}/>} {selectedHygieneFinding.evidence.profile_context.semantic_type&&<Metric label="Detected meaning" value={selectedHygieneFinding.evidence.profile_context.semantic_type}/>} {selectedHygieneFinding.evidence.profile_context.row_count!=null&&<Metric label="Rows profiled" value={Number(selectedHygieneFinding.evidence.profile_context.row_count).toLocaleString()}/>} {selectedHygieneFinding.evidence.profile_context.distinct_count!=null&&<Metric label="Distinct values" value={Number(selectedHygieneFinding.evidence.profile_context.distinct_count).toLocaleString()}/>} {selectedHygieneFinding.evidence.profile_context.null_count!=null&&<Metric label="Missing values" value={Number(selectedHygieneFinding.evidence.profile_context.null_count).toLocaleString()}/>} {selectedHygieneFinding.evidence.profile_context.null_percent!=null&&<Metric label="Missing %" value={`${selectedHygieneFinding.evidence.profile_context.null_percent}%`}/>} {selectedHygieneFinding.evidence.profile_context.min_length!=null&&<Metric label="Shortest length" value={selectedHygieneFinding.evidence.profile_context.min_length}/>} {selectedHygieneFinding.evidence.profile_context.max_length!=null&&<Metric label="Longest length" value={selectedHygieneFinding.evidence.profile_context.max_length}/>} {selectedHygieneFinding.evidence.profile_context.avg_length!=null&&<Metric label="Typical length" value={selectedHygieneFinding.evidence.profile_context.avg_length}/>}</div>{selectedHygieneFinding.evidence.profile_context.typical_values?.length>0&&<div className="typical-values"><b>Typical / common values</b>{selectedHygieneFinding.evidence.profile_context.typical_values.map((item,idx)=><span key={idx}><code>{String(item.value)}</code>{item.count!=null&&` · ${Number(item.count).toLocaleString()} records`}</span>)}</div>}</div>}<div className="evidence-block source-evidence"><b>Source-record verification</b><p>{selectedHygieneFinding.evidence?.source_record_context?.message||"Open the source system or ask the data owner to verify the underlying record when the profile evidence is not enough."}</p></div><div className={`evidence-guidance evidence-${(selectedHygieneFinding.evidence?.sufficiency?.level||"LOW").toLowerCase()}`}><b>{selectedHygieneFinding.evidence?.sufficiency?.level==="LOW"?"More evidence is needed before making a confident decision":"Evidence guidance"}</b><p>{selectedHygieneFinding.evidence?.sufficiency?.guidance||"Verify the source record or consult a business expert before deciding."}</p>{selectedHygieneFinding.evidence?.sufficiency?.limitations?.length>0&&<ul>{selectedHygieneFinding.evidence.sufficiency.limitations.map((x,idx)=><li key={idx}>{x}</li>)}</ul>}</div></div><div><b>Why it matters</b><p>{selectedHygieneFinding.why_it_matters}</p></div><div><b>Recommended next step</b><p>{selectedHygieneFinding.recommended_action}</p></div></div><p><b>What should you decide?</b> Pick the option that best matches the business reality. If the evidence is limited, verify the source or use expert review rather than guessing.</p><label>Notes / evidence</label><textarea rows="3" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="What did you learn? Who did you confirm this with?"/><div className="decision-grid">{[["BAD_DATA","This data needs correction"],["VALID_EXCEPTION","This is acceptable as-is"],["EXPECTATION_NEEDS_CHANGE","Create or adjust a quality expectation"],["EXPERT_REVIEW","I need expert review"]].map(([value,label])=><button key={value} onClick={()=>refreshAction(()=>api(`/quality/issues/${hygieneIssue.id}/findings/${encodeURIComponent(selectedHygieneFinding.fingerprint)}/decision`,userEmail,{method:"POST",body:JSON.stringify({decision_type:value,notes})}),`Finding decision recorded: ${label}.`).then(()=>{setSelectedHygieneFinding(null);setNotes("");})}>{label}</button>)}</div></section>}
     {decisionIssue&&<section id="guided-investigation" className="panel guide-panel"><div className="eyebrow">Guided investigation</div><h2>{decisionIssue.title}</h2><p><b>Step 1 — Understand what TestGen found.</b> {decisionIssue.issue_type==="HYGIENE_FINDING"?"A profiling finding highlights a characteristic or pattern that deserves review; it is not a failed rule by itself.":"A quality check did not pass. Review the affected records, fields, and evidence before deciding why."}</p><p><b>Step 2 — Make a stewardship decision.</b> Choose the explanation that best matches what you know. If you cannot determine it, escalate instead of guessing.</p><label>Notes / evidence</label><textarea rows="3" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="What did you learn? Who did you confirm this with?"/><div className="decision-grid">{[["BAD_DATA","The data is incorrect"],["VALID_EXCEPTION","This is a valid exception"],["EXPECTATION_NEEDS_CHANGE","The quality expectation needs to change"],["EXPERT_REVIEW","I need expert review"]].map(([value,label])=><button key={value} onClick={()=>refreshAction(()=>api(`/quality/issues/${decisionIssue.id}/decision`,userEmail,{method:"POST",body:JSON.stringify({decision_type:value,notes})}),`Decision recorded: ${label}.`).then(()=>{setDecisionIssue(null);setSelectedQualityIssueId(null)})}>{label}</button>)}</div></section>}
   </>;
 }
 
-function PublicationPanel({asset,userEmail,doAction}) {
+function PublicationPanel({asset,role,userEmail,doAction}) {
   const required=asset.readiness.checks.filter(c=>c.required);
   const missing=required.filter(c=>!c.complete);
   const ready=missing.length===0;
   const status=asset.publication.status;
-  return <section className="panel">
-    <div className="eyebrow">Guided publication readiness</div>
-    <h2>{ready?"This information is ready for the next review step":"There are still things to finish before review"}</h2>
-    <p className="lead">{ready?"You have completed the required stewardship information. Submitting does not publish the information—it sends the governed snapshot to an approver for review.":"AI Data Steward has checked the required stewardship information. Finish the items below before submitting rather than trying to understand catalog standards yourself."}</p>
-    <div className={`publication-readiness ${ready?"ready":"not-ready"}`}><strong>{required.length-missing.length} of {required.length}</strong><span>required stewardship checks complete</span></div>
-    {required.map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div></div>)}
-    <div className="education"><b>What happens next?</b><p><b>Submit for review</b> sends the asset to an approver. <b>Approval</b> creates an immutable governed release. <b>Publish</b> makes the approved release available through the configured enterprise catalog adapter.</p></div>
-    <div className="lifecycle">{["DRAFT","IN_REVIEW","APPROVED","PUBLISHED"].map(s=><div key={s} className={status===s?"life current":"life"}>{s.replace("_"," ")}</div>)}</div>
-    <div className="button-row">
-      <button className="primary" disabled={!ready||!["DRAFT","NEEDS_UPDATE","REJECTED"].includes(status)} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/submit`,userEmail,{method:"POST",body:JSON.stringify({comments:"Stewardship checks complete; ready for review."})}),"Submitted for review.")}>Submit for review</button>
-      <button disabled={status!=="IN_REVIEW"} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved and immutable release created.")}>Approve</button>
-      <button disabled={status!=="APPROVED"} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published to the configured catalog adapter.")}>Publish</button>
+
+  const canSubmit=["STEWARD","ORG_ADMIN"].includes(role);
+  const canReview=["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const canPublish=["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+
+  const roleName={
+    STEWARD:"Steward",
+    APPROVER:"Approver",
+    ORG_ADMIN:"Organization administrator",
+    ENTERPRISE_ADMIN:"Enterprise administrator",
+    VIEWER:"Viewer"
+  }[role]||"User";
+
+  function roleGuidance(){
+    if(status==="IN_REVIEW"){
+      if(canReview) return "This information is waiting for your review. You can approve it or return it for changes.";
+      return "Your submission is waiting for an approver. You can continue other stewardship work while the review is in progress.";
+    }
+    if(status==="APPROVED"){
+      if(canPublish) return "The review is complete and an approved release exists. You can publish it when the organization is ready.";
+      return "This information has been approved. Publishing is handled by an authorized reviewer or administrator.";
+    }
+    if(status==="PUBLISHED"){
+      return "This information has been published. If stewardship information changes later, AI Data Steward will identify what needs to be reviewed again.";
+    }
+    if(status==="REJECTED"){
+      if(canSubmit) return "The reviewer returned this information for changes. Address the requested work, then submit it again.";
+      return "This information was returned for changes and is waiting for the steward to update it.";
+    }
+    if(status==="NEEDS_UPDATE"){
+      if(canSubmit) return "Something changed after publication. Complete the required stewardship updates, then submit the revised information for review.";
+      return "Published information has changed and needs steward updates before a new review.";
+    }
+    if(canSubmit){
+      return ready
+        ? "Your required stewardship work is complete. Your responsibility is to submit it for review—not to approve or publish it yourself."
+        : "Finish the required stewardship work below. When it is complete, you will be able to submit it for review.";
+    }
+    if(canReview){
+      return "There is nothing for you to approve yet. The steward must complete the required work and submit it first.";
+    }
+    return "You can view publication readiness, but you do not have an action to take at this stage.";
+  }
+
+  return <section className="panel role-aware-publication">
+    <div className="task-head">
+      <div>
+        <div className="eyebrow">Share & publish</div>
+        <h2>{ready?"Required stewardship checks are complete":"There are still things to finish before review"}</h2>
+        <p className="lead">{roleGuidance()}</p>
+      </div>
+      <div className="role-responsibility"><span>Your role</span><b>{roleName}</b></div>
     </div>
-    {!ready&&<p className="muted">The submit button stays unavailable until required stewardship checks are complete.</p>}
+
+    <div className={`publication-readiness ${ready?"ready":"not-ready"}`}>
+      <strong>{required.length-missing.length} of {required.length}</strong>
+      <span>required stewardship checks complete</span>
+    </div>
+
+    {required.map(c=><div className="readiness-row" key={c.key}>
+      <span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span>
+      <div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div>
+    </div>)}
+
+    <div className="publication-role-path">
+      <div className={["DRAFT","NEEDS_UPDATE","REJECTED"].includes(status)?"current":status!=="DRAFT"?"done":""}>
+        <span>1</span><div><b>Prepare</b><small>Steward completes required work</small></div>
+      </div>
+      <div className={status==="IN_REVIEW"?"current":["APPROVED","PUBLISHED"].includes(status)?"done":""}>
+        <span>2</span><div><b>Review</b><small>Approver reviews the submission</small></div>
+      </div>
+      <div className={status==="APPROVED"?"current":status==="PUBLISHED"?"done":""}>
+        <span>3</span><div><b>Approved</b><small>Governed release is created</small></div>
+      </div>
+      <div className={status==="PUBLISHED"?"current":""}>
+        <span>4</span><div><b>Published</b><small>Approved release is shared</small></div>
+      </div>
+    </div>
+
+    <div className="role-action-card">
+      {canSubmit&&["DRAFT","NEEDS_UPDATE","REJECTED"].includes(status)&&<>
+        <div><b>Your next action</b><p>{ready?"Send this information to an approver. Submission does not publish it.":"Complete the required stewardship checks before sending this for review."}</p></div>
+        <button className="primary" disabled={!ready} onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/submit`,userEmail,{method:"POST",body:JSON.stringify({comments:"Stewardship checks complete; ready for review."})}),"Submitted for review.")}>Submit for review</button>
+      </>}
+
+      {!canReview&&status==="IN_REVIEW"&&<div className="waiting-publication"><span className="waiting-pill">Waiting</span><div><b>Waiting for an approver</b><p>No publication action is required from you right now.</p></div></div>}
+
+      {canReview&&status==="IN_REVIEW"&&<>
+        <div><b>Your review decision</b><p>Confirm that the required stewardship information is suitable for an approved release, or return it to the steward with changes needed.</p></div>
+        <div className="button-row">
+          <button onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the requested stewardship changes and resubmit."})}),"Returned to the steward for changes.")}>Return for changes</button>
+          <button className="primary" onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved and governed release created.")}>Approve</button>
+        </div>
+      </>}
+
+      {!canPublish&&status==="APPROVED"&&<div className="waiting-publication"><span className="waiting-pill">Approved</span><div><b>Review is complete</b><p>An authorized reviewer or administrator will handle publication.</p></div></div>}
+
+      {canPublish&&status==="APPROVED"&&<>
+        <div><b>Ready to publish</b><p>An approved governed release already exists. Publishing shares that approved release through the configured organization catalog connection.</p></div>
+        <button className="primary" onClick={()=>doAction(()=>api(`/assets/${asset.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish approved release</button>
+      </>}
+
+      {status==="PUBLISHED"&&<div className="waiting-publication published-state"><span className="completion-mark">✓</span><div><b>Published</b><p>This approved release is published. Stewardship continues if the information changes later.</p></div></div>}
+
+      {!canSubmit&&!canReview&&!["IN_REVIEW","APPROVED","PUBLISHED"].includes(status)&&<div className="waiting-publication"><div><b>No action for your role</b><p>You can review the readiness status, but another role is responsible for the next publication step.</p></div></div>}
+    </div>
+
+    <details className="advanced-details publication-explainer">
+      <summary>How the approval and publication process works</summary>
+      <p><b>Submit for review</b> sends the current governed information to an approver. <b>Approve</b> creates an immutable governed release. <b>Publish</b> shares that approved release through the configured publication connection.</p>
+    </details>
   </section>;
 }
 
-function ReviewQueue({assets,userEmail,doAction,onOpen}) { const review=assets.filter(a=>["IN_REVIEW","APPROVED","NEEDS_UPDATE"].includes(a.publication.status)); return <><h1>Review Queue</h1><p className="lead">Assets waiting for governance approval or enterprise publication.</p>{review.length===0&&<div className="empty">Nothing is waiting for review.</div>}{review.map(a=><div className="review-row" key={a.asset.asset_id}><div><b>{a.asset.name}</b><span>{a.readiness.score}% stewardship completeness · {a.quality?.overall_score??"—"}% quality</span></div><Status value={a.publication.status}/><div className="button-row"><button onClick={()=>onOpen(a.asset.asset_id)}>Inspect</button>{a.publication.status==="IN_REVIEW"&&<><button onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the remaining governance questions."})}),"Returned for changes.")}>Return</button><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved.")}>Approve</button></>}{a.publication.status==="APPROVED"&&<button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish</button>}</div></div>)}</> }
+function ReviewQueue({assets,role,userEmail,doAction,onOpen}) {
+  const canReview=["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const canPublish=["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const review=assets.filter(a=>["IN_REVIEW","APPROVED","NEEDS_UPDATE"].includes(a.publication.status));
 
-function PublicationHistory({assets,selectedAssetId,setSelectedAssetId,userEmail}) { const [history,setHistory]=useState(null); useEffect(()=>{if(selectedAssetId)api(`/assets/${selectedAssetId}/history`,userEmail).then(setHistory)},[selectedAssetId,userEmail]); return <><h1>Publishing History</h1><p className="lead">Approved releases are immutable snapshots. DCAT JSON-LD is generated only when the release crosses the publication boundary.</p><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select><div className="two-col"><section className="panel"><h2>Audit timeline</h2>{history?.events?.length?history.events.map(e=><div className="timeline" key={e.id}><b>{e.event_type.replaceAll("_"," ")}</b><span>{e.from_status||"—"} → {e.to_status||"—"}</span><small>{e.created_at}</small></div>):<p>No events yet.</p>}</section><section className="panel"><h2>Immutable releases</h2>{history?.releases?.length?history.releases.map(r=><details key={r.id}><summary>Release v{r.version_number} {r.published_at?"· Published":"· Approved"}</summary><p><b>Snapshot hash:</b> {r.snapshot_hash}</p>{r.ckan_name&&<p><b>Catalog name:</b> {r.ckan_name}</p>}{r.publication_result?.dcat_payload&&<><p><b>Generated DCAT JSON-LD</b></p><pre>{JSON.stringify(r.publication_result.dcat_payload,null,2)}</pre></>}</details>):<p>No releases yet.</p>}</section></div></> }
+  return <>
+    <h1>Review Queue</h1>
+    <p className="lead">Work submitted by stewards appears here for review. The actions shown are limited to what your current role is authorized to do.</p>
+
+    {!canReview&&<div className="education strong"><b>This queue is read-only for your role.</b><p>An Approver or administrator is responsible for approval and publication decisions.</p></div>}
+    {review.length===0&&<EmptyState title="Nothing is waiting for review or publication." text="Submitted or approved items will appear here when your role has work to do."/>}
+
+    {review.map(a=><div className="review-row role-review-row" key={a.asset.asset_id}>
+      <div>
+        <b>{a.asset.name}</b>
+        <span>{a.readiness.score}% stewardship completeness · {a.quality?.overall_score??"—"}% information quality</span>
+      </div>
+      <Status value={a.publication.status}/>
+      <div className="button-row">
+        <button onClick={()=>onOpen(a.asset.asset_id)}>View details</button>
+
+        {canReview&&a.publication.status==="IN_REVIEW"&&<>
+          <button onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the requested stewardship changes and resubmit."})}),"Returned to the steward for changes.")}>Return for changes</button>
+          <button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved and governed release created.")}>Approve</button>
+        </>}
+
+        {canPublish&&a.publication.status==="APPROVED"&&<button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish approved release</button>}
+
+        {a.publication.status==="NEEDS_UPDATE"&&<span className="review-state-note">Waiting for steward updates</span>}
+      </div>
+    </div>)}
+  </>;
+}
+
+function PublicationHistory({assets,selectedAssetId,setSelectedAssetId,userEmail}) { const [history,setHistory]=useState(null); useEffect(()=>{if(selectedAssetId)api(`/assets/${selectedAssetId}/history`,userEmail).then(setHistory)},[selectedAssetId,userEmail]); return <><h1>Publishing History</h1><p className="lead">Review the approval and publication history for governed information. Technical release details remain available inside each release record.</p><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select><div className="two-col"><section className="panel"><h2>Audit timeline</h2>{history?.events?.length?history.events.map(e=><div className="timeline" key={e.id}><b>{e.event_type.replaceAll("_"," ")}</b><span>{e.from_status||"—"} → {e.to_status||"—"}</span><small>{e.created_at}</small></div>):<EmptyState title="No publication events yet." text="Submission, approval, return, and publishing activity will appear here."/>}</section><section className="panel"><h2>Immutable releases</h2>{history?.releases?.length?history.releases.map(r=><details key={r.id}><summary>Release v{r.version_number} {r.published_at?"· Published":"· Approved"}</summary><p><b>Snapshot hash:</b> {r.snapshot_hash}</p>{r.ckan_name&&<p><b>Catalog name:</b> {r.ckan_name}</p>}{r.publication_result?.dcat_payload&&<><p><b>Technical publication payload (DCAT JSON-LD)</b></p><pre>{JSON.stringify(r.publication_result.dcat_payload,null,2)}</pre></>}</details>):<EmptyState title="No approved releases yet." text="Approved release history will appear here after the first approval."/>}</section></div></> }
 
 function Metric({label,value}) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div> }
 function Status({value}) { return <span className={`status status-${(value||"").toLowerCase()}`}>{(value||"").replaceAll("_"," ")}</span> }
 function friendlyType(value){return (value||"").replaceAll("_"," ").toLowerCase().replace(/\b\w/g,m=>m.toUpperCase())}
+function priorityLabel(value){
+  return {HIGH:"Do this soon",MEDIUM:"Needs attention",LOW:"When you can"}[value]||friendlyType(value);
+}
+function responsibilityLabel(task){
+  if(task?.responsibility) return task.responsibility;
+  const domain=(task?.governance_domain||"").toUpperCase();
+  return {
+    OWNERSHIP:"Know who is responsible",
+    CLASSIFICATION:"Protect it appropriately",
+    LIFECYCLE:"Keep it for the right amount of time",
+    RETENTION:"Keep it for the right amount of time",
+    QUALITY:"Make sure it can be trusted",
+    METADATA:"Help others understand it",
+    DESCRIPTION:"Help others understand it",
+    CATALOG:"Know where it lives",
+    GOVERNANCE:"Make the right stewardship decision",
+    MAINTENANCE:"Keep it current"
+  }[domain]||"Stewardship";
+}
+function EmptyState({title="Nothing needs attention right now.",text=null}){
+  return <div className="empty empty-state"><b>{title}</b>{text&&<span>{text}</span>}</div>;
+}
 
 createRoot(document.getElementById("root")).render(<App/>);

@@ -142,3 +142,12 @@ class PeriodicReviewCreate(BaseModel):
     answers: dict[str, str]
     change_summary: str | None = None
     review_interval_days: int = 365
+
+
+
+class UnderstandingUpdate(BaseModel):
+    business_definition: str
+    business_area: str
+    search_terms: list[str]
+    update_frequency: str
+    contact_point: str

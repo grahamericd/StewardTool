@@ -15,7 +15,7 @@ from ..schemas import (
     AssetCreate, AssetGovernanceUpdate, MetadataUpsert, QualityProfileCreate, QualityResultCreate,
     QualityRuleCreate, RejectRequest, ResourceCreate, OfficialSourceDecision, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
     QualityEngineLinkCreate, QualityAssessmentRequest, QualityRunRequest, QualityRuleStatusUpdate, QualityDecisionCreate,
-    HygieneFindingDecisionCreate, PeriodicReviewCreate,
+    HygieneFindingDecisionCreate, PeriodicReviewCreate, UnderstandingUpdate,
 )
 from ..services.publication import approve, mark_needs_update_if_published, publish, reject, submit_for_review
 from ..services.readiness import calculate_readiness
@@ -289,6 +289,50 @@ def choose_official_source(asset_id: int, payload: OfficialSourceDecision, ctx=D
         ))
 
     mark_needs_update_if_published(db, asset, ctx["user"].id, "Official source decision changed")
+    db.commit()
+
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    sync_tasks(db, asset, ctx["user"].id)
+    db.commit()
+    return serialize_asset(asset)
+
+
+@router.patch("/assets/{asset_id}/understanding")
+def update_understanding(asset_id: int, payload: UnderstandingUpdate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+
+    asset.business_definition = payload.business_definition.strip()
+    asset.business_domain = payload.business_area.strip()
+
+    metadata_values = {
+        "theme": [payload.business_area.strip()],
+        "keyword": [value.strip() for value in payload.search_terms if value and value.strip()],
+        "update_frequency": [payload.update_frequency.strip()],
+        "contact": [payload.contact_point.strip()],
+    }
+
+    for key, values in metadata_values.items():
+        for item in db.scalars(
+            select(AssetMetadata).where(
+                AssetMetadata.asset_id == asset.id,
+                AssetMetadata.metadata_key == key,
+            )
+        ).all():
+            db.delete(item)
+
+        for value in values:
+            db.add(AssetMetadata(
+                asset_id=asset.id,
+                metadata_key=key,
+                metadata_value=value,
+                metadata_source="STEWARD",
+                review_status="APPROVED",
+                created_by=ctx["user"].id,
+                reviewed_by=ctx["user"].id,
+                reviewed_at=datetime.now(timezone.utc),
+            ))
+
+    mark_needs_update_if_published(db, asset, ctx["user"].id, "Business description or discovery information changed")
     db.commit()
 
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
