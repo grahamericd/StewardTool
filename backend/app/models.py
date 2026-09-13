@@ -106,6 +106,7 @@ class DataAsset(Base):
     quality_profiles = relationship("QualityProfile", cascade="all, delete-orphan")
     quality_rules = relationship("QualityRule", cascade="all, delete-orphan")
     tasks = relationship("StewardshipTask", cascade="all, delete-orphan")
+    reviews = relationship("StewardshipReview", cascade="all, delete-orphan")
 
 
 class DataResource(Base):
@@ -165,6 +166,21 @@ class GovernanceRequirement(Base):
     weight: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     required_for_submission: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class StewardshipReview(Base):
+    __tablename__ = "stewardship_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("data_assets.id", ondelete="CASCADE"), nullable=False)
+    review_type: Mapped[str] = mapped_column(String(40), default="PERIODIC", nullable=False)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    change_summary: Mapped[str | None] = mapped_column(Text)
+    snapshot_before: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    next_review_due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class StewardshipTask(Base):

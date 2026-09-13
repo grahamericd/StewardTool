@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import StewardshipTask
+from ..models import StewardshipReview, StewardshipTask
 from .readiness import calculate_readiness
 from .quality_orchestrator import reconcile_asset_quality_issues
 
@@ -23,10 +25,50 @@ TASK_TEXT = {
 }
 
 
+def _sync_periodic_review_task(db: Session, asset, existing_tasks):
+    """Create a maintenance task only when a review is actually due."""
+    now = datetime.now(timezone.utc)
+    latest = None
+    if getattr(asset, "reviews", None):
+        latest = max(asset.reviews, key=lambda r: r.reviewed_at)
+
+    # New information gets a full year before its first scheduled review.
+    due_at = latest.next_review_due if latest else (asset.created_at + timedelta(days=365))
+    task = next((t for t in existing_tasks if t.task_type == "periodic_review"), None)
+
+    if due_at <= now:
+        if not task:
+            db.add(StewardshipTask(
+                organization_id=asset.organization_id,
+                asset_id=asset.id,
+                task_type="periodic_review",
+                governance_domain="MAINTENANCE",
+                title="Review what has changed",
+                why_it_matters=(
+                    "Stewardship decisions can become outdated as business processes, "
+                    "owners, systems, policies, and data quality change."
+                ),
+                recommended_action=(
+                    "Complete a short review. AI Data Steward will reopen only the "
+                    "areas that actually changed."
+                ),
+                priority="MEDIUM",
+                source_type="PERIODIC_REVIEW",
+                source_reference=due_at.date().isoformat(),
+            ))
+        elif task.status == "COMPLETED":
+            task.status = "OPEN"
+            task.completed_at = None
+    elif task and task.status == "OPEN":
+        task.status = "COMPLETED"
+        task.completed_at = now
+
+
 def sync_tasks(db: Session, asset, actor_id: int | None = None):
     reconcile_asset_quality_issues(db, asset)
     readiness = calculate_readiness(asset)
     existing = db.scalars(select(StewardshipTask).where(StewardshipTask.asset_id == asset.id)).all()
+    _sync_periodic_review_task(db, asset, existing)
     by_type = {t.task_type: t for t in existing}
 
     for check in readiness["checks"]:

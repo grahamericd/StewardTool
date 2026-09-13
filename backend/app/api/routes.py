@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -9,13 +9,13 @@ from ..config import settings
 from ..db import get_db
 from ..models import (
     AssetMetadata, AssetPublication, AssetRelease, AssetResource, CatalogSystem, DataAsset, DataResource,
-    PublicationEvent, QualityDecision, QualityEngineResource, QualityIssue, QualityProfile, QualityResult, QualityRule, StewardshipTask,
+    PublicationEvent, QualityDecision, QualityEngineResource, QualityIssue, QualityProfile, QualityResult, QualityRule, StewardshipReview, StewardshipTask,
 )
 from ..schemas import (
     AssetCreate, AssetGovernanceUpdate, MetadataUpsert, QualityProfileCreate, QualityResultCreate,
-    QualityRuleCreate, RejectRequest, ResourceCreate, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
+    QualityRuleCreate, RejectRequest, ResourceCreate, OfficialSourceDecision, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
     QualityEngineLinkCreate, QualityAssessmentRequest, QualityRunRequest, QualityRuleStatusUpdate, QualityDecisionCreate,
-    HygieneFindingDecisionCreate,
+    HygieneFindingDecisionCreate, PeriodicReviewCreate,
 )
 from ..services.publication import approve, mark_needs_update_if_published, publish, reject, submit_for_review
 from ..services.readiness import calculate_readiness
@@ -78,6 +78,18 @@ def _task_guidance(task):
             "can_escalate": True,
         }
 
+    if domain == "MAINTENANCE" or source_type == "PERIODIC_REVIEW":
+        return {
+            "responsibility": "Keep stewardship current",
+            "learn_title": "Why periodic review matters",
+            "learn_text": (
+                "You do not need to redo the whole stewardship process. Confirm what "
+                "has changed since the last review, and AI Data Steward will reopen "
+                "only the areas that need attention."
+            ),
+            "can_escalate": False,
+        }
+
     if domain in {"METADATA", "DESCRIPTION"}:
         return {
             "responsibility": "Make the information understandable",
@@ -115,6 +127,7 @@ def asset_query():
         selectinload(DataAsset.resources).selectinload(AssetResource.resource).selectinload(DataResource.system),
         selectinload(DataAsset.metadata_items),
         selectinload(DataAsset.publication),
+        selectinload(DataAsset.reviews),
         selectinload(DataAsset.quality_profiles),
         selectinload(DataAsset.quality_rules),
         selectinload(DataAsset.tasks),
@@ -234,6 +247,56 @@ def add_resource(asset_id: int, payload: ResourceCreate, ctx=Depends(require_rol
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"]); sync_tasks(db, asset); db.commit(); return serialize_asset(asset)
 
 
+@router.post("/assets/{asset_id}/official-source")
+def choose_official_source(asset_id: int, payload: OfficialSourceDecision, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    links = db.scalars(select(AssetResource).where(AssetResource.asset_id == asset.id)).all()
+
+    selected = None
+    for link in links:
+        if link.resource_id == payload.resource_id:
+            selected = link
+            break
+
+    if not selected:
+        raise HTTPException(status_code=400, detail="Selected location is not linked to this information asset")
+
+    # Exactly one linked representation is the official source at a time.
+    for link in links:
+        link.is_authoritative = (link.resource_id == payload.resource_id)
+
+    asset.authoritative_status = "CONFIRMED"
+
+    # Preserve the steward's business reasoning as approved metadata so the
+    # decision remains understandable without exposing technical catalog fields.
+    if payload.decision_basis:
+        for item in db.scalars(
+            select(AssetMetadata).where(
+                AssetMetadata.asset_id == asset.id,
+                AssetMetadata.metadata_key == "official_source_basis",
+            )
+        ).all():
+            db.delete(item)
+        db.add(AssetMetadata(
+            asset_id=asset.id,
+            metadata_key="official_source_basis",
+            metadata_value=payload.decision_basis,
+            metadata_source="STEWARD",
+            review_status="APPROVED",
+            created_by=ctx["user"].id,
+            reviewed_by=ctx["user"].id,
+            reviewed_at=datetime.now(timezone.utc),
+        ))
+
+    mark_needs_update_if_published(db, asset, ctx["user"].id, "Official source decision changed")
+    db.commit()
+
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    sync_tasks(db, asset, ctx["user"].id)
+    db.commit()
+    return serialize_asset(asset)
+
+
 @router.put("/assets/{asset_id}/metadata")
 def upsert_metadata(asset_id: int, payload: MetadataUpsert, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
@@ -244,6 +307,183 @@ def upsert_metadata(asset_id: int, payload: MetadataUpsert, ctx=Depends(require_
         db.add(AssetMetadata(asset_id=asset.id, metadata_key=payload.metadata_key, metadata_value=value, metadata_source=payload.metadata_source, review_status=payload.review_status, created_by=ctx["user"].id, reviewed_by=ctx["user"].id if payload.review_status == "APPROVED" else None, reviewed_at=datetime.now(timezone.utc) if payload.review_status == "APPROVED" else None))
     mark_needs_update_if_published(db, asset, ctx["user"].id, f"Metadata changed: {payload.metadata_key}"); db.commit()
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"]); sync_tasks(db, asset); db.commit(); return serialize_asset(asset)
+
+
+@router.get("/assets/{asset_id}/reviews")
+def list_periodic_reviews(asset_id: int, ctx=Depends(current_context), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    reviews = db.scalars(
+        select(StewardshipReview)
+        .where(
+            StewardshipReview.asset_id == asset.id,
+            StewardshipReview.organization_id == ctx["organization_id"],
+        )
+        .order_by(StewardshipReview.reviewed_at.desc())
+    ).all()
+
+    latest = reviews[0] if reviews else None
+    next_due = latest.next_review_due if latest else (asset.created_at + timedelta(days=365))
+    return {
+        "latest": _serialize_review(latest) if latest else None,
+        "next_review_due": next_due.isoformat(),
+        "is_due": next_due <= datetime.now(timezone.utc),
+        "history": [_serialize_review(r) for r in reviews],
+    }
+
+
+def _serialize_review(review):
+    if not review:
+        return None
+    return {
+        "id": review.id,
+        "review_type": review.review_type,
+        "answers": review.answers or {},
+        "change_summary": review.change_summary,
+        "reviewed_by": review.reviewed_by,
+        "reviewed_at": review.reviewed_at.isoformat() if review.reviewed_at else None,
+        "next_review_due": review.next_review_due.isoformat() if review.next_review_due else None,
+    }
+
+
+def _ensure_review_followup_task(db, asset, review, key, domain, title, why, action, priority="MEDIUM"):
+    task_type = f"review_change_{key}"
+    existing = db.scalar(
+        select(StewardshipTask).where(
+            StewardshipTask.asset_id == asset.id,
+            StewardshipTask.task_type == task_type,
+            StewardshipTask.status != "COMPLETED",
+        )
+    )
+    if existing:
+        existing.source_reference = str(review.id)
+        existing.source_type = "PERIODIC_REVIEW_CHANGE"
+        return existing
+
+    task = StewardshipTask(
+        organization_id=asset.organization_id,
+        asset_id=asset.id,
+        task_type=task_type,
+        governance_domain=domain,
+        title=title,
+        why_it_matters=why,
+        recommended_action=action,
+        priority=priority,
+        source_type="PERIODIC_REVIEW_CHANGE",
+        source_reference=str(review.id),
+    )
+    db.add(task)
+    return task
+
+
+@router.post("/assets/{asset_id}/reviews")
+def complete_periodic_review(asset_id: int, payload: PeriodicReviewCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    now = datetime.now(timezone.utc)
+    interval_days = min(max(payload.review_interval_days, 30), 1095)
+
+    review = StewardshipReview(
+        organization_id=ctx["organization_id"],
+        asset_id=asset.id,
+        review_type="PERIODIC",
+        answers=payload.answers,
+        change_summary=payload.change_summary,
+        snapshot_before=build_asset_snapshot(asset),
+        reviewed_by=ctx["user"].id,
+        reviewed_at=now,
+        next_review_due=now + timedelta(days=interval_days),
+    )
+    db.add(review)
+    db.flush()
+
+    followups = {
+        "purpose": (
+            "DESCRIPTION", "Review the information purpose",
+            "The steward indicated that the business purpose may have changed.",
+            "Update the plain-language description so it reflects how the information is used now."
+        ),
+        "ownership": (
+            "OWNERSHIP", "Review ownership responsibilities",
+            "The steward indicated that the owner or stewardship responsibility may have changed.",
+            "Confirm the current business owner and data steward."
+        ),
+        "locations": (
+            "CATALOG", "Review where the information lives",
+            "The steward indicated that systems, files, reports, or other locations may have changed.",
+            "Update the known locations and representations for this information."
+        ),
+        "official_source": (
+            "GOVERNANCE", "Reconfirm the official source",
+            "The steward indicated that the location relied on as the official record may have changed.",
+            "Use the guided Official Source workflow to reconfirm the correct location."
+        ),
+        "classification": (
+            "CLASSIFICATION", "Recheck how this information should be handled",
+            "The steward indicated that sensitivity, access, or sharing conditions may have changed.",
+            "Repeat the guided classification review using the current business context."
+        ),
+        "retention": (
+            "LIFECYCLE", "Recheck retention requirements",
+            "The steward indicated that the retention requirement or governing authority may have changed.",
+            "Confirm the current approved retention requirement and authority."
+        ),
+        "quality": (
+            "QUALITY", "Reassess whether this information can be trusted",
+            "The steward indicated that there may be new or meaningful quality concerns.",
+            "Review the current quality evidence and rerun assessment when appropriate."
+        ),
+        "active_use": (
+            "MAINTENANCE", "Confirm whether this information is still actively used",
+            "The steward indicated that the information may no longer be actively used.",
+            "Confirm whether it should remain active, be archived, or follow another lifecycle action."
+        ),
+    }
+
+    created_followups = []
+    for key, answer in (payload.answers or {}).items():
+        if answer not in {"changed", "unsure", "no"}:
+            continue
+        # For active use, "no" means no longer actively used; for other fields
+        # "changed"/"unsure" means follow-up is needed.
+        needs_followup = (
+            (key == "active_use" and answer in {"no", "unsure"})
+            or (key != "active_use" and answer in {"changed", "unsure"})
+        )
+        if needs_followup and key in followups:
+            domain, title, why, action = followups[key]
+            task = _ensure_review_followup_task(
+                db, asset, review, key, domain, title, why, action
+            )
+            created_followups.append(title)
+
+    # Close the scheduled review task itself.
+    periodic_task = db.scalar(
+        select(StewardshipTask).where(
+            StewardshipTask.asset_id == asset.id,
+            StewardshipTask.task_type == "periodic_review",
+            StewardshipTask.status != "COMPLETED",
+        )
+    )
+    if periodic_task:
+        periodic_task.status = "COMPLETED"
+        periodic_task.completed_at = now
+
+    db.commit()
+
+    # Existing readiness tasks are still reconciled normally.
+    asset = get_asset_for_org(db, asset_id, ctx["organization_id"])
+    sync_tasks(db, asset, ctx["user"].id)
+    db.commit()
+
+    return {
+        "success": True,
+        "review": _serialize_review(review),
+        "follow_up_tasks": created_followups,
+        "message": (
+            "Review complete. Follow-up work was created only for areas that changed."
+            if created_followups
+            else "Review complete. No stewardship changes need follow-up."
+        ),
+    }
 
 
 @router.get("/tasks")

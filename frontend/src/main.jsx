@@ -4,7 +4,7 @@ import { api } from "./api";
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
-const NAV = ["Steward Home", "My Information", "Discover Data", "My Next Steps", "Data Asset 360", "Review Queue", "Publication History"];
+const NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps", "Information Details", "Review Queue", "Publishing History"];
 
 function App() {
   const [page, setPage] = useState("Steward Home");
@@ -53,33 +53,41 @@ function App() {
         setSelectedAssetId(task.asset_id);
         if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
           setGuidedTask(null);
-          setAssetTab("Data Quality");
+          setAssetTab("Can This Information Be Trusted?");
           setSelectedQualityIssueId(Number(task.source_reference));
+        } else if(task.source_type==="PERIODIC_REVIEW"){
+          setGuidedTask(task);
+          setAssetTab("Review & Maintain");
+          setSelectedQualityIssueId(null);
         } else {
           setGuidedTask(task);
-          setAssetTab(task.governance_domain==="QUALITY"?"Data Quality":"Governance");
+          setAssetTab(task.governance_domain==="QUALITY"?"Can This Information Be Trusted?":"Governance");
           setSelectedQualityIssueId(null);
         }
-        setPage("Data Asset 360");
-      }} onInventory={()=>setPage("My Information")} onDiscover={()=>setPage("Discover Data")} onAllTasks={()=>setPage("My Next Steps")} />}
-      {page === "My Information" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
-      {page === "Discover Data" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Data Asset 360")}} />}
+        setPage("Information Details");
+      }} onInventory={()=>setPage("My Information")} onDiscover={()=>setPage("Discover Information")} onAllTasks={()=>setPage("My Next Steps")} />}
+      {page === "My Information" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
+      {page === "Discover Information" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "My Next Steps" && <Inbox tasks={tasks} onGuide={task=>{
         setSelectedAssetId(task.asset_id);
         if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
           setGuidedTask(null);
-          setAssetTab("Data Quality");
+          setAssetTab("Can This Information Be Trusted?");
           setSelectedQualityIssueId(Number(task.source_reference));
+        } else if(task.source_type==="PERIODIC_REVIEW"){
+          setGuidedTask(task);
+          setAssetTab("Review & Maintain");
+          setSelectedQualityIssueId(null);
         } else {
           setGuidedTask(task);
-          setAssetTab(task.governance_domain==="QUALITY"?"Data Quality":"Governance");
+          setAssetTab(task.governance_domain==="QUALITY"?"Can This Information Be Trusted?":"Governance");
           setSelectedQualityIssueId(null);
         }
-        setPage("Data Asset 360");
+        setPage("Information Details");
       }} />}
-      {page === "Data Asset 360" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
-      {page === "Review Queue" && <ReviewQueue assets={assets} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Data Asset 360")}} />}
-      {page === "Publication History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
+      {page === "Information Details" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
+      {page === "Review Queue" && <ReviewQueue assets={assets} userEmail={userEmail} doAction={doAction} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
+      {page === "Publishing History" && <PublicationHistory assets={assets} selectedAssetId={selectedAssetId} setSelectedAssetId={setSelectedAssetId} userEmail={userEmail} />}
     </main>
   </div>;
 }
@@ -122,7 +130,7 @@ function StewardHome({dashboard,assets,tasks,onTask,onInventory,onDiscover,onAll
       <Metric label="Information assets" value={assetCount}/>
       <Metric label="Needs your attention" value={now.length}/>
       <Metric label="Waiting on others" value={waiting.length}/>
-      <Metric label="Governance readiness" value={`${dashboard?.average_governance_readiness??0}%`}/>
+      <Metric label="Stewardship completeness" value={`${dashboard?.average_governance_readiness??0}%`}/>
     </div>
 
     {next?<section className="panel start-here">
@@ -168,14 +176,14 @@ function Dashboard({dashboard, assets, onOpen}) {
   if (!dashboard) return <p>Loading...</p>;
   return <>
     <h1>My Information Inventory</h1>
-    <p className="lead">Your organization’s governed information landscape — systems, data assets, metadata, stewardship work, quality, and publication status.</p>
+    <p className="lead">Your organization’s governed information landscape — systems, informations, metadata, stewardship work, quality, and publication status.</p>
     <div className="metrics six">
-      <Metric label="Known Systems" value={dashboard.systems}/><Metric label="Data Assets" value={dashboard.assets}/><Metric label="Open Stewardship Tasks" value={dashboard.open_tasks}/><Metric label="Governance Readiness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average Quality" value={`${dashboard.average_quality_score}%`}/><Metric label="Unstructured Resources" value={dashboard.unstructured_resources}/>
+      <Metric label="Systems we know about" value={dashboard.systems}/><Metric label="Information we know about" value={dashboard.assets}/><Metric label="Open Stewardship Tasks" value={dashboard.open_tasks}/><Metric label="Governance Readiness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average Quality" value={`${dashboard.average_quality_score}%`}/><Metric label="Unstructured Resources" value={dashboard.unstructured_resources}/>
     </div>
     <h2>Data assets</h2>
     <div className="grid">{assets.map(a=><div className="card" key={a.asset.asset_id}>
       <div className="eyebrow">{a.asset.business_domain || "Business information"}</div><h3>{a.asset.name}</h3><p>{a.asset.business_definition || "Definition needs review."}</p>
-      <div className="status-line"><span>Governance readiness</span><b>{a.readiness.score}%</b></div><div className="progress"><div style={{width:`${a.readiness.score}%`}} /></div>
+      <div className="status-line"><span>Stewardship completeness</span><b>{a.readiness.score}%</b></div><div className="progress"><div style={{width:`${a.readiness.score}%`}} /></div>
       <div className="status-line"><span>Data quality</span><b>{a.quality?.overall_score != null ? `${a.quality.overall_score}%` : "Not assessed"}</b></div>
       <div className="status-line"><span>Open tasks</span><b>{a.task_summary.open}</b></div>
       <div className="status-line"><span>Publication</span><Status value={a.publication.status}/></div>
@@ -200,31 +208,763 @@ function Inbox({tasks, onGuide}) {
 }
 
 function Discover({systems, userEmail, onDone}) {
-  const [step,setStep]=useState(1), [systemName,setSystemName]=useState("Business Licensing System"), [purpose,setPurpose]=useState("Manages licenses, applications, payments, disciplinary actions, and uploaded PDF applications."), [assetName,setAssetName]=useState("Application"), [definition,setDefinition]=useState("Information submitted by an individual or organization requesting a professional license or related agency action."), [createdAsset,setCreatedAsset]=useState(null), [resourceName,setResourceName]=useState("Submitted License Applications"), [resourceType,setResourceType]=useState("PDF_COLLECTION"), [structureType,setStructureType]=useState("UNSTRUCTURED");
-  const candidates=["License","Application","Payment","Disciplinary Action"];
-  async function createAsset(){const a=await api("/assets",userEmail,{method:"POST",body:JSON.stringify({name:assetName,business_definition:definition,business_domain:"Professional Licensing",business_owner:"Licensing Division"})});setCreatedAsset(a);setStep(4)}
-  async function addResource(){const s=systems.find(x=>x.name===systemName)||systems[0];await api(`/assets/${createdAsset.asset.asset_id}/resources`,userEmail,{method:"POST",body:JSON.stringify({system_id:s?.id||null,name:resourceName,resource_type:resourceType,structure_type:structureType,description:"Resource identified during guided discovery.",relationship_type:"REPRESENTATION",is_authoritative:false})});onDone(createdAsset.asset.asset_id)}
-  return <><h1>Discover Your Data</h1><p className="lead">Start with a system you know. We will guide you from software usage to a real inventory of the information your organization manages.</p><div className="stepper">{[1,2,3,4].map(n=><div key={n} className={step>=n?"step on":"step"}>{n}</div>)}</div>
-    {step===1&&<section className="panel"><div className="eyebrow">Step 1</div><h2>What system or tool does your team use?</h2><input value={systemName} onChange={e=>setSystemName(e.target.value)}/><button className="primary" onClick={()=>setStep(2)}>Continue</button></section>}
-    {step===2&&<section className="panel"><div className="eyebrow">Step 2</div><h2>What does this system help your team do?</h2><textarea rows="5" value={purpose} onChange={e=>setPurpose(e.target.value)}/><button className="primary" onClick={()=>setStep(3)}>Identify information</button></section>}
-    {step===3&&<section className="panel"><div className="eyebrow">Step 3</div><h2>I found these potential data assets</h2><div className="candidate-list">{candidates.map(c=><label className="check-card" key={c}><input type="radio" checked={assetName===c} onChange={()=>setAssetName(c)}/><span>{c}</span></label>)}</div><div className="education"><b>You are building a catalog without filling out a catalog form.</b><p>A data asset is meaningful business information. The system is only one place where that information may live.</p></div><label>Describe {assetName} in plain language</label><textarea rows="4" value={definition} onChange={e=>setDefinition(e.target.value)}/><button className="primary" onClick={createAsset}>Add to my information inventory</button></section>}
-    {step===4&&<section className="panel"><div className="eyebrow">Step 4</div><h2>Where else does this information exist?</h2><div className="education strong"><b>Think beyond databases.</b><p>PDFs, scanned forms, spreadsheets, emails, images, shared drives, and SharePoint libraries contain information that also needs governance.</p></div><label>Resource name</label><input value={resourceName} onChange={e=>setResourceName(e.target.value)}/><label>Type</label><select value={resourceType} onChange={e=>{const v=e.target.value;setResourceType(v);setStructureType(["PDF_COLLECTION","DOCUMENT_LIBRARY","EMAIL_COLLECTION","IMAGE_COLLECTION"].includes(v)?"UNSTRUCTURED":"STRUCTURED")}}><option value="PDF_COLLECTION">PDF document collection</option><option value="DOCUMENT_LIBRARY">Document library</option><option value="SPREADSHEET">Spreadsheet</option><option value="DATABASE_TABLE">Database table</option><option value="API">API</option></select><label>Structure</label><input value={structureType} readOnly/><button className="primary" onClick={addResource}>Add resource and continue to governance</button></section>}
+  const [step,setStep]=useState(1);
+  const [systemName,setSystemName]=useState("");
+  const [systemPurpose,setSystemPurpose]=useState("");
+  const [touchpointType,setTouchpointType]=useState("SCREEN");
+  const [touchpointName,setTouchpointName]=useState("");
+  const [informationName,setInformationName]=useState("");
+  const [customInformation,setCustomInformation]=useState("");
+  const [businessUse,setBusinessUse]=useState("");
+  const [createdAsset,setCreatedAsset]=useState(null);
+  const [createdSystem,setCreatedSystem]=useState(null);
+  const [resourceName,setResourceName]=useState("");
+  const [resourceType,setResourceType]=useState("APPLICATION_SCREEN");
+  const [structureType,setStructureType]=useState("STRUCTURED");
+  const [locationReference,setLocationReference]=useState("");
+
+  function words(text){
+    return (text||"").toLowerCase();
+  }
+
+  function suggestedInformation(){
+    const text=words(`${systemPurpose} ${touchpointName}`);
+    const suggestions=[];
+    const add=(name,why)=>{ if(!suggestions.some(x=>x.name===name)) suggestions.push({name,why}); };
+
+    if(/corporat|business registration|sunbiz|filing/.test(text)){
+      add("Corporate Filings","Records about business registrations, amendments, annual reports, and related corporate actions.");
+      add("Registered Agent Information","Information identifying the person or organization designated to receive official notices.");
+      add("Business Entity Information","Core information describing registered businesses and their status.");
+    }
+    if(/licen[cs]|permit|application/.test(text)){
+      add("License Applications","Information submitted to request a license, permit, certification, or related agency action.");
+      add("Licenses and Credentials","Information about issued licenses, status, dates, and credential details.");
+    }
+    if(/payment|fee|invoice|billing|transaction/.test(text)){
+      add("Payments and Fees","Information about payments, fees, refunds, and related financial transactions.");
+    }
+    if(/disciplin|complaint|enforcement|violation/.test(text)){
+      add("Disciplinary and Enforcement Records","Information about complaints, violations, investigations, and disciplinary actions.");
+    }
+    if(/employee|human resource|hr|personnel|payroll/.test(text)){
+      add("Employee Records","Information used to manage employees, assignments, employment status, and personnel activity.");
+      add("Payroll Information","Information used to calculate and administer employee compensation and payroll activity.");
+    }
+    if(/contract|procure|vendor|purchase/.test(text)){
+      add("Vendor and Contract Information","Information about vendors, procurements, contracts, purchasing, and related activity.");
+    }
+    if(/case|client|customer|participant|citizen|resident/.test(text)){
+      add("Case or Client Records","Information used to manage an individual case, client, participant, or service interaction.");
+    }
+    if(/document|pdf|scan|upload|form/.test(text)){
+      add("Submitted Documents","Documents, forms, scans, or attachments submitted as part of the business process.");
+    }
+    if(/report|dashboard|analytics/.test(text)){
+      add("Operational Reporting Information","Information assembled to monitor workload, outcomes, performance, or operational activity.");
+    }
+
+    if(suggestions.length===0){
+      add("Business Records","The main business information created or maintained through this system or tool.");
+      add("Transactions or Activities","Information recording the actions, events, or work performed through this system.");
+      add("Supporting Documents","Files, forms, messages, or documents used to support the business process.");
+    }
+    return suggestions.slice(0,6);
+  }
+
+  function resourceDefaults(type){
+    const map={
+      SCREEN:["APPLICATION_SCREEN","STRUCTURED"],
+      FILE:["FILE","SEMI_STRUCTURED"],
+      FOLDER:["DOCUMENT_LIBRARY","UNSTRUCTURED"],
+      EMAIL:["EMAIL_COLLECTION","UNSTRUCTURED"],
+      DOCUMENT:["PDF_COLLECTION","UNSTRUCTURED"],
+      REPORT:["REPORT","STRUCTURED"],
+      DATABASE:["DATABASE_TABLE","STRUCTURED"],
+      API:["API","STRUCTURED"],
+    };
+    return map[type]||["OTHER","SEMI_STRUCTURED"];
+  }
+
+  function chooseTouchpoint(v){
+    setTouchpointType(v);
+    const [rt,st]=resourceDefaults(v);
+    setResourceType(rt);
+    setStructureType(st);
+  }
+
+  async function ensureSystem(){
+    const existing=systems.find(x=>x.name.trim().toLowerCase()===systemName.trim().toLowerCase());
+    if(existing){
+      setCreatedSystem(existing);
+      return existing;
+    }
+    const created=await api("/systems",userEmail,{
+      method:"POST",
+      body:JSON.stringify({
+        name:systemName.trim(),
+        business_purpose:systemPurpose.trim()||businessUse.trim(),
+        description:`System identified during guided discovery. ${systemPurpose.trim()}`.trim(),
+        vendor:null,
+        system_owner:null
+      })
+    });
+    setCreatedSystem(created);
+    return created;
+  }
+
+  async function createAsset(){
+    const chosen=(customInformation.trim()||informationName.trim());
+    if(!chosen) return;
+    const system=await ensureSystem();
+    const definition=businessUse.trim()
+      ? `${chosen} is information used to ${businessUse.trim().replace(/\.$/,"")}.`
+      : `${chosen} is business information managed through ${systemName}.`;
+    const asset=await api("/assets",userEmail,{
+      method:"POST",
+      body:JSON.stringify({
+        name:chosen,
+        business_definition:definition,
+        business_domain:null,
+        business_owner:null,
+        data_steward:null
+      })
+    });
+    setCreatedAsset(asset);
+    const suggestedResource=touchpointName.trim() || `${chosen} ${touchpointType.toLowerCase()}`;
+    setResourceName(suggestedResource);
+    setStep(5);
+  }
+
+  async function addResource(){
+    const system=createdSystem || await ensureSystem();
+    await api(`/assets/${createdAsset.asset.asset_id}/resources`,userEmail,{
+      method:"POST",
+      body:JSON.stringify({
+        system_id:system?.id||null,
+        name:resourceName.trim() || `${createdAsset.asset.name} source`,
+        resource_type:resourceType,
+        structure_type:structureType,
+        description:`Location identified during guided discovery: ${touchpointType.toLowerCase()} used for ${createdAsset.asset.name}.`,
+        location_reference:locationReference.trim()||null,
+        relationship_type:"REPRESENTATION",
+        is_authoritative:false
+      })
+    });
+    onDone(createdAsset.asset.asset_id);
+  }
+
+  const candidates=suggestedInformation();
+  const selectedInformation=customInformation.trim()||informationName.trim();
+
+  return <><h1>Discover Your Information</h1>
+    <p className="lead">You do not need to know what a “information” is. Start with the system, screen, file, folder, email, document, or report you already use. We will help identify the business information inside it.</p>
+    <div className="stepper">{[1,2,3,4,5].map(n=><div key={n} className={step>=n?"step on":"step"}>{n}</div>)}</div>
+
+    {step===1&&<section className="panel discover-guide">
+      <div className="eyebrow">Step 1 · Start with what you know</div>
+      <h2>What system or tool does your team use?</h2>
+      <p className="lead">This can be a software application, website, shared platform, database, or even a business tool your team has a special name for.</p>
+      {systems?.length>0&&<div className="known-systems">
+        <span>Already known:</span>
+        {systems.map(s=><button type="button" key={s.id} className={systemName===s.name?"mini-choice selected":"mini-choice"} onClick={()=>{setSystemName(s.name);setSystemPurpose(s.business_purpose||"")}}>{s.name}</button>)}
+      </div>}
+      <label>System or tool name<input value={systemName} onChange={e=>setSystemName(e.target.value)} placeholder="e.g., Sunbiz, Licensing System, SharePoint"/></label>
+      <label>What does your team use it to do?<textarea rows="4" value={systemPurpose} onChange={e=>setSystemPurpose(e.target.value)} placeholder="Describe the work in ordinary language. For example: Register businesses and maintain their filing history."/></label>
+      <div className="button-row"><button className="primary" disabled={!systemName.trim()||!systemPurpose.trim()} onClick={()=>setStep(2)}>Continue</button></div>
+    </section>}
+
+    {step===2&&<section className="panel discover-guide">
+      <div className="eyebrow">Step 2 · Identify something people actually use</div>
+      <h2>What do you interact with in {systemName}?</h2>
+      <p className="lead">Think about where you see, enter, receive, download, or work with information. This helps us move from “the system” to the actual information your organization manages.</p>
+      <div className="touchpoint-grid">
+        {[
+          ["SCREEN","Screen or page","A screen where people view or enter information"],
+          ["FILE","File or download","CSV, spreadsheet, fixed-width file, export, or other file"],
+          ["FOLDER","Folder or library","Shared drive, SharePoint library, or collection of files"],
+          ["EMAIL","Email or mailbox","Messages or an email collection used for business work"],
+          ["DOCUMENT","Document or form","PDF, scanned form, application, image, or document"],
+          ["REPORT","Report or dashboard","A report, dashboard, extract, or recurring output"],
+          ["DATABASE","Database data","A table, view, or database source you know about"],
+          ["API","API or interface","Information exchanged with another system"]
+        ].map(([v,title,help])=><button type="button" key={v} className={touchpointType===v?"touchpoint selected":"touchpoint"} onClick={()=>chooseTouchpoint(v)}><b>{title}</b><span>{help}</span></button>)}
+      </div>
+      <label>What is it called?<input value={touchpointName} onChange={e=>setTouchpointName(e.target.value)} placeholder={touchpointType==="SCREEN"?"e.g., Corporate Filing Search screen":"Give it the name your team uses"}/></label>
+      <div className="button-row"><button onClick={()=>setStep(1)}>Back</button><button className="primary" disabled={!touchpointName.trim()} onClick={()=>setStep(3)}>Help me identify the information</button></div>
+    </section>}
+
+    {step===3&&<section className="panel discover-guide">
+      <div className="eyebrow">Step 3 · Identify the business information</div>
+      <h2>What business information does “{touchpointName}” manage?</h2>
+      <p className="lead">Based on what you told us, these are possibilities—not automatic answers. Choose the one that best matches how your organization thinks about the information, or enter your own.</p>
+      <div className="candidate-list guided-candidates">
+        {candidates.map(c=><button type="button" className={informationName===c.name&&!customInformation?"info-candidate selected":"info-candidate"} key={c.name} onClick={()=>{setInformationName(c.name);setCustomInformation("")}}><b>{c.name}</b><span>{c.why}</span></button>)}
+      </div>
+      <div className="or-divider"><span>or describe it yourself</span></div>
+      <label>Business information name<input value={customInformation} onChange={e=>{setCustomInformation(e.target.value);if(e.target.value)setInformationName("")}} placeholder="Use the name business staff would recognize"/></label>
+      <div className="education"><b>What are we doing?</b><p>We are separating the <b>system</b> from the <b>information</b>. A system can manage several kinds of business information, and the same information can exist in several places.</p></div>
+      <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" disabled={!selectedInformation} onClick={()=>setStep(4)}>Continue</button></div>
+    </section>}
+
+    {step===4&&<section className="panel discover-guide">
+      <div className="eyebrow">Step 4 · Describe why it exists</div>
+      <h2>What does {selectedInformation} help your team do?</h2>
+      <p className="lead">Describe the business purpose, not the technology. This becomes the starting description other employees will use to understand the information.</p>
+      <textarea rows="5" value={businessUse} onChange={e=>setBusinessUse(e.target.value)} placeholder={`For example: Process business registrations, confirm filing status, and respond to public and agency questions about registered entities.`}/>
+      <div className="discovery-summary">
+        <div><span>System</span><b>{systemName}</b></div>
+        <div><span>Where you encountered it</span><b>{touchpointName}</b></div>
+        <div><span>Business information</span><b>{selectedInformation}</b></div>
+      </div>
+      <div className="button-row"><button onClick={()=>setStep(3)}>Back</button><button className="primary" disabled={!businessUse.trim()} onClick={createAsset}>This looks right</button></div>
+    </section>}
+
+    {step===5&&createdAsset&&<section className="panel discover-guide">
+      <div className="eyebrow">Step 5 · Record where the information lives</div>
+      <h2>Where did you find {createdAsset.asset.name}?</h2>
+      <p className="lead">You have identified the business information. Now record the screen, file, folder, document, report, database, or interface that represents it.</p>
+      <div className="education strong"><b>Important</b><p>This is not yet declaring the official or authoritative source. You are simply recording a known place where the information exists. We will guide that decision separately.</p></div>
+      <label>Name for this location or representation<input value={resourceName} onChange={e=>setResourceName(e.target.value)}/></label>
+      <label>Where is it located? <span className="muted">(optional)</span><input value={locationReference} onChange={e=>setLocationReference(e.target.value)} placeholder="URL, folder path, database/schema/table, report name, or other locator"/></label>
+      <details className="advanced-details"><summary>Technical details</summary>
+        <div className="form-grid">
+          <label>Representation type<select value={resourceType} onChange={e=>setResourceType(e.target.value)}><option value="APPLICATION_SCREEN">Application screen</option><option value="FILE">File</option><option value="DOCUMENT_LIBRARY">Document library</option><option value="EMAIL_COLLECTION">Email collection</option><option value="PDF_COLLECTION">PDF/document collection</option><option value="REPORT">Report/dashboard</option><option value="SPREADSHEET">Spreadsheet</option><option value="DATABASE_TABLE">Database table</option><option value="API">API</option><option value="OTHER">Other</option></select></label>
+          <label>Structure<select value={structureType} onChange={e=>setStructureType(e.target.value)}><option value="STRUCTURED">Structured</option><option value="SEMI_STRUCTURED">Semi-structured</option><option value="UNSTRUCTURED">Unstructured</option></select></label>
+        </div>
+      </details>
+      <div className="button-row"><button className="primary" disabled={!resourceName.trim()} onClick={addResource}>Save and continue</button></div>
+    </section>}
   </>;
 }
 
 function Asset360({asset,assets,systems,userEmail,selectedAssetId,setSelectedAssetId,doAction,tab,setTab,selectedQualityIssueId,setSelectedQualityIssueId,guidedTask,setGuidedTask}) {
   const [quality,setQuality]=useState(null), [metaKey,setMetaKey]=useState("theme"), [metaValue,setMetaValue]=useState("Professional Licensing"), [gov,setGov]=useState({});
   useEffect(()=>{if(asset){setGov({business_owner:asset.asset.business_owner||"",data_steward:asset.asset.data_steward||"",classification:asset.asset.classification||"",retention_requirement:asset.asset.retention_requirement||"",retention_authority:asset.asset.retention_authority||""});api(`/assets/${asset.asset.asset_id}/quality`,userEmail).then(setQuality)}},[asset?.asset?.asset_id,userEmail]);
-  if(!asset)return <p>No data assets yet.</p>; const a=asset.asset;
-  return <><div className="title-row"><div><h1>Information Details</h1><p className="lead">One place to understand what this information means, where it lives, how it is governed, and whether it can be trusted.</p></div><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select></div>
+  if(!asset)return <p>No informations yet.</p>; const a=asset.asset;
+  return <><div className="title-row"><div><h1>Information Details</h1><p className="lead">This page brings together what the information means, where it lives, how it is governed, whether it can be trusted, and whether it is ready to share.</p><p className="lead">One place to understand what this information means, where it lives, how it is governed, and whether it can be trusted.</p></div><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select></div>
     <section className="asset-hero"><div><div className="eyebrow">{a.business_domain||"Business information"}</div><h2>{a.name}</h2><p>{a.business_definition}</p></div><div className="hero-scores"><div><span>Governance</span><strong>{asset.readiness.score}%</strong></div><div><span>Quality</span><strong>{asset.quality?.overall_score != null ? `${asset.quality.overall_score}%` : "—"}</strong></div><Status value={asset.publication.status}/></div></section>
-    <div className="tabs">{["Overview","Metadata & Tags","Governance","Data Quality","Publication"].map(t=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}</div>
-    {tab==="Overview"&&<div className="two-col"><section className="panel"><h2>Governance readiness</h2>{asset.readiness.checks.map(c=><div className="readiness-row" key={c.key}><span className={c.complete?"ok":"warn"}>{c.complete?"✓":"!"}</span><div><b>{c.title}</b><small>{c.complete?"Complete":c.guidance}</small></div></div>)}</section><section className="panel"><h2>Where this information lives</h2>{asset.resources.map(r=><div className="resource" key={r.resource_id}><b>{r.name}</b><span>{friendlyType(r.resource_type)} · {r.structure_type}</span><span>{r.system||"No system"}{r.is_authoritative?" · Authoritative source":""}</span></div>)}</section></div>}
-    {tab==="Metadata & Tags"&&<section className="panel"><div className="eyebrow">Plain language → standards behind the scenes</div><h2>Help people understand and find this information</h2><p className="muted">The user never sees DCAT field names. These answers are mapped to standards when published.</p><label>{metaKey==="theme"?"What business area does this information relate to?":metaKey==="keyword"?"What words would someone search for?":metaKey==="update_frequency"?"How often is this information updated?":"Who can answer questions about this information?"}</label><select value={metaKey} onChange={e=>setMetaKey(e.target.value)}><option value="theme">Business area</option><option value="keyword">Search terms</option><option value="update_frequency">Update frequency</option><option value="contact">Contact point</option></select><input value={metaValue} onChange={e=>setMetaValue(e.target.value)}/><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset_id}/metadata`,userEmail,{method:"PUT",body:JSON.stringify({metadata_key:metaKey,metadata_value:metaKey==="keyword"?metaValue.split(",").map(x=>x.trim()).filter(Boolean):metaKey==="contact"?{name:metaValue,email:"contact@example.gov"}:metaValue})}),"Metadata saved and readiness recalculated.")}>Save metadata</button></section>}
+    <div className="tabs">{["Overview","Where It Lives","Help Others Understand It","Governance","Can This Information Be Trusted?","Review & Maintain","Share & Publish"].map(t=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}</div>
+    {tab==="Overview"&&<InformationOverview asset={asset} setTab={setTab}/>}
+    {tab==="Where It Lives"&&<WhereItLives asset={asset} userEmail={userEmail} doAction={doAction}/>}
+    {tab==="Help Others Understand It"&&<UnderstandingGuide asset={asset} userEmail={userEmail} doAction={doAction} />}
     {tab==="Governance"&&<GovernanceGuide asset={asset} gov={gov} setGov={setGov} userEmail={userEmail} doAction={doAction} guidedTask={guidedTask} setGuidedTask={setGuidedTask}/>}
-    {tab==="Data Quality"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
-    {tab==="Publication"&&<PublicationPanel asset={asset} userEmail={userEmail} doAction={doAction}/>} 
+    {tab==="Can This Information Be Trusted?"&&<QualityPanel quality={quality} asset={asset} userEmail={userEmail} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} doAction={async(fn,msg)=>{await doAction(fn,msg);setQuality(await api(`/assets/${a.asset_id}/quality`,userEmail))}}/>}
+    {tab==="Review & Maintain"&&<PeriodicReviewPanel asset={asset} userEmail={userEmail} doAction={doAction} guidedTask={guidedTask} setGuidedTask={setGuidedTask}/>}
+    {tab==="Share & Publish"&&<PublicationPanel asset={asset} userEmail={userEmail} doAction={doAction}/>} 
   </>;
+}
+
+function InformationOverview({asset,setTab}) {
+  const a=asset.asset;
+  const official=asset.resources?.find(r=>r.is_authoritative);
+  return <section className="panel">
+    <div className="eyebrow">At a glance</div>
+    <h2>{a.name}</h2>
+    <p className="lead">{a.business_definition||"A plain-language description still needs to be completed."}</p>
+    <div className="overview-grid">
+      <button onClick={()=>setTab("Where It Lives")}><span>Where it lives</span><b>{asset.resources?.length||0} known location{asset.resources?.length===1?"":"s"}</b><small>{official?`Official source: ${official.name}`:"Official source still needs to be confirmed"}</small></button>
+      <button onClick={()=>setTab("Help Others Understand It")}><span>Understand it</span><b>{a.business_domain||"Business area needs review"}</b><small>Describe it in language coworkers can understand and search for.</small></button>
+      <button onClick={()=>setTab("Governance")}><span>Govern it</span><b>{a.classification||"Classification needs review"}</b><small>Ownership, handling, and retention decisions.</small></button>
+      <button onClick={()=>setTab("Can This Information Be Trusted?")}><span>Trust it</span><b>{asset.quality?.overall_score!=null?`${asset.quality.overall_score}% quality score`:"Quality not yet assessed"}</b><small>Review evidence and quality findings.</small></button>
+      <button onClick={()=>setTab("Review & Maintain")}><span>Keep it current</span><b>Review what changed</b><small>Confirm whether ownership, location, rules, or business use have changed since the last review.</small></button>
+    </div>
+  </section>;
+}
+
+function WhereItLives({asset,userEmail,doAction}) {
+  const a=asset.asset;
+  const locations=asset.resources||[];
+  const currentOfficial=locations.find(r=>r.is_authoritative);
+  const [mode,setMode]=useState("LIST");
+  const [step,setStep]=useState(1);
+  const [selectedId,setSelectedId]=useState(currentOfficial?.resource_id||"");
+  const [originAnswer,setOriginAnswer]=useState("");
+  const [conflictAnswer,setConflictAnswer]=useState("");
+  const [copyAnswer,setCopyAnswer]=useState("");
+  const [basis,setBasis]=useState("");
+
+  function selected(){
+    return locations.find(r=>r.resource_id===Number(selectedId));
+  }
+
+  function recommendationText(){
+    const s=selected();
+    if(!s) return "";
+    const reasons=[];
+    if(originAnswer==="yes") reasons.push("this is where the information is originally created or officially maintained");
+    if(conflictAnswer==="yes") reasons.push("the organization would rely on this location if versions disagreed");
+    if(copyAnswer==="no") reasons.push("it is not merely a copy, export, report, or working extract");
+    return reasons.length
+      ? `${s.name} appears to be the official source because ${reasons.join(", ")}.`
+      : `${s.name} is the location you identified as the source the organization should rely on for official business decisions.`;
+  }
+
+  function reviewRecommendation(){
+    setBasis(recommendationText());
+    setStep(4);
+  }
+
+  async function confirmOfficial(){
+    const s=selected();
+    if(!s) return;
+    await doAction(
+      ()=>api(`/assets/${a.asset_id}/official-source`,userEmail,{
+        method:"POST",
+        body:JSON.stringify({
+          resource_id:s.resource_id,
+          decision_basis:basis.trim()||recommendationText()
+        })
+      }),
+      `${s.name} is now recorded as the official source.`
+    );
+    setMode("LIST");
+    setStep(1);
+  }
+
+  if(mode==="GUIDE"){
+    return <section className="panel official-source-guide">
+      <div className="wizard-head">
+        <div><div className="eyebrow">Guided task · Official source</div><h2>Which location should people rely on as official?</h2><p className="lead">The same business information can exist in a database, download, report, spreadsheet, document library, or other location. We will help you identify which one should be trusted when those versions differ.</p></div>
+        <span>Step {step} of 4</span>
+      </div>
+
+      {step===1&&<>
+        <h3>Where is the information originally created or officially maintained?</h3>
+        <p className="lead">Choose the place closest to the business process that creates or maintains the official record. Do not automatically choose the place that is easiest to access.</p>
+        <div className="source-choice-list">
+          {locations.map(r=><button type="button" key={r.resource_id} className={Number(selectedId)===r.resource_id?"source-choice selected":"source-choice"} onClick={()=>setSelectedId(r.resource_id)}>
+            <div><b>{r.name}</b><span>{r.system||"No system recorded"} · {friendlyResourceType(r.resource_type)}</span></div>
+            <small>{r.location_reference||r.description||"No location details recorded"}</small>
+          </button>)}
+        </div>
+        {locations.length===0&&<div className="education strong"><b>No known locations yet.</b><p>Use Discover Information to record at least one place where this information exists before determining the official source.</p></div>}
+        <div className="button-row"><button onClick={()=>setMode("LIST")}>Cancel</button><button className="primary" disabled={!selectedId} onClick={()=>setStep(2)}>Continue</button></div>
+      </>}
+
+      {step===2&&<>
+        <h3>If two versions disagreed, would the organization rely on {selected()?.name}?</h3>
+        <p className="lead">Imagine a report, spreadsheet, or download shows one value and this location shows another. Which one would staff treat as the official record for a business decision?</p>
+        <Choice value={conflictAnswer} setValue={setConflictAnswer} options={[["yes","Yes — this is what we would rely on"],["no","No — another location would be considered official"],["unsure","I’m not sure"]]}/>
+        <div className="button-row"><button onClick={()=>setStep(1)}>Back</button>{conflictAnswer==="no"?<button className="primary" onClick={()=>{setSelectedId("");setConflictAnswer("");setStep(1)}}>Choose a different location</button>:<button className="primary" disabled={!conflictAnswer||conflictAnswer==="unsure"} onClick={()=>setStep(3)}>Continue</button>}</div>
+        {conflictAnswer==="unsure"&&<div className="education strong"><b>Do not guess.</b><p>Ask the business owner or the team responsible for the process which location is considered the official record. The real expert-handoff workflow will be added in the next Stage 4.2 increment.</p></div>}
+      </>}
+
+      {step===3&&<>
+        <h3>Is {selected()?.name} mainly a copy, export, report, or working extract?</h3>
+        <p className="lead">Copies can be useful and trustworthy, but they usually should not be labeled the official source if another location is where the record is actually maintained.</p>
+        <Choice value={copyAnswer} setValue={setCopyAnswer} options={[["no","No — the official record is maintained here"],["yes","Yes — this is mainly a copy, export, report, or extract"],["unsure","I’m not sure"]]}/>
+        <div className="button-row"><button onClick={()=>setStep(2)}>Back</button>{copyAnswer==="yes"?<button className="primary" onClick={()=>{setSelectedId("");setCopyAnswer("");setStep(1)}}>Choose a different location</button>:<button className="primary" disabled={!copyAnswer||copyAnswer==="unsure"} onClick={reviewRecommendation}>Review recommendation</button>}</div>
+        {copyAnswer==="unsure"&&<div className="education strong"><b>Find out before confirming.</b><p>Ask whether this location is the system of record or whether it is generated from another source.</p></div>}
+      </>}
+
+      {step===4&&<>
+        <h3>Recommended official source</h3>
+        <div className="recommendation-card">
+          <span>AI Data Steward recommends</span>
+          <strong>{selected()?.name}</strong>
+          <p>{basis}</p>
+        </div>
+        <div className="education"><b>What this decision means</b><p>Other known locations can still be useful. This simply records which one people should rely on when they need the official business record.</p></div>
+        <label>Why is this the official source?<textarea rows="4" value={basis} onChange={e=>setBasis(e.target.value)} /></label>
+        <div className="button-row"><button onClick={()=>setStep(3)}>Back</button><button className="primary" onClick={confirmOfficial}>Confirm official source</button></div>
+      </>}
+    </section>;
+  }
+
+  return <section className="panel">
+    <div className="task-head">
+      <div><div className="eyebrow">Where it lives</div><h2>Known locations and representations</h2><p className="lead">The same information can exist in more than one place. Record those places here, then identify which one should be relied on as the official business source.</p></div>
+      <button className="primary" disabled={locations.length===0} onClick={()=>{setMode("GUIDE");setStep(1);setSelectedId(currentOfficial?.resource_id||"")}}>{currentOfficial?"Review official source":"Determine official source"}</button>
+    </div>
+
+    {locations.length===0&&<div className="empty">No locations have been recorded yet. Use Discover Information to add the first place where this information exists.</div>}
+
+    <div className="location-list">
+      {locations.map(r=><div className={r.is_authoritative?"location-card official":"location-card"} key={r.resource_id}>
+        <div className="location-main">
+          <div><b>{r.name}</b>{r.is_authoritative&&<span className="official-badge">Official source</span>}</div>
+          <span>{r.system||"No system recorded"} · {friendlyResourceType(r.resource_type)}</span>
+          <small>{r.location_reference||r.description||"No location details recorded"}</small>
+        </div>
+        <div className="location-context">
+          <span>{friendlyStructure(r.structure_type)}</span>
+          <span>{r.relationship_type==="REPRESENTATION"?"Known representation":r.relationship_type}</span>
+        </div>
+      </div>)}
+    </div>
+
+    {currentOfficial?<div className="education strong"><b>Official source confirmed: {currentOfficial.name}</b><p>If this information also exists in reports, downloads, spreadsheets, APIs, or document collections, those can remain recorded without being treated as the official record.</p></div>:locations.length>0&&<div className="education strong"><b>The official source still needs to be confirmed.</b><p>Use the guided questions above. You do not need to know terms like “system of record” or “authoritative resource.”</p></div>}
+  </section>;
+}
+
+function friendlyResourceType(value){
+  const labels={
+    APPLICATION_SCREEN:"Application screen",
+    FILE:"File or download",
+    DOCUMENT_LIBRARY:"Folder or document library",
+    EMAIL_COLLECTION:"Email collection",
+    PDF_COLLECTION:"Documents or PDFs",
+    REPORT:"Report or dashboard",
+    SPREADSHEET:"Spreadsheet",
+    DATABASE_TABLE:"Database data",
+    API:"API or system interface",
+    OTHER:"Other location"
+  };
+  return labels[value]||String(value||"Location").replaceAll("_"," ").toLowerCase();
+}
+
+function friendlyStructure(value){
+  const labels={STRUCTURED:"Organized fields/records",SEMI_STRUCTURED:"Partly structured",UNSTRUCTURED:"Documents/content"};
+  return labels[value]||String(value||"").replaceAll("_"," ").toLowerCase();
+}
+
+function PeriodicReviewPanel({asset,userEmail,doAction,guidedTask,setGuidedTask}) {
+  const a=asset.asset;
+  const [reviewData,setReviewData]=useState(null);
+  const [mode,setMode]=useState(guidedTask?.source_type==="PERIODIC_REVIEW"?"REVIEW":"SUMMARY");
+  const [step,setStep]=useState(1);
+  const [answers,setAnswers]=useState({});
+  const [notes,setNotes]=useState("");
+  const [result,setResult]=useState(null);
+
+  useEffect(()=>{
+    api(`/assets/${a.asset_id}/reviews`,userEmail).then(setReviewData).catch(()=>setReviewData(null));
+  },[a.asset_id,userEmail]);
+
+  useEffect(()=>{
+    if(guidedTask?.source_type==="PERIODIC_REVIEW"){
+      setMode("REVIEW");
+      setStep(1);
+    }
+  },[guidedTask?.id]);
+
+  const questions=[
+    {
+      key:"purpose",
+      title:"Has the business purpose changed?",
+      help:"Think about what this information helps the organization accomplish and how people use it.",
+      yes:"No — it still serves the same purpose",
+      changed:"Yes — how it is used or what it represents has changed"
+    },
+    {
+      key:"ownership",
+      title:"Has the business owner or steward changed?",
+      help:"Think about who can make business decisions about the information and who coordinates stewardship day to day.",
+      yes:"No — the same people or roles are still responsible",
+      changed:"Yes — ownership or stewardship responsibility has changed"
+    },
+    {
+      key:"locations",
+      title:"Does the information still live in the same places?",
+      help:"Consider systems, files, folders, reports, databases, document collections, APIs, or other known locations.",
+      yes:"Yes — the known locations are still correct",
+      changed:"No — a location was added, removed, replaced, or changed"
+    },
+    {
+      key:"official_source",
+      title:"Is the official source still the place the organization would rely on?",
+      help:"Imagine two versions disagree. Would staff still rely on the currently recorded official source?",
+      yes:"Yes — the official source is still correct",
+      changed:"No — another location may now be the official source"
+    },
+    {
+      key:"classification",
+      title:"Has anything changed that could affect how this information should be handled?",
+      help:"Think about sensitivity, personal information, public availability, legal restrictions, access, or sharing.",
+      yes:"No — the handling/classification still appears appropriate",
+      changed:"Yes — sensitivity, access, or sharing conditions may have changed"
+    },
+    {
+      key:"retention",
+      title:"Is the retention requirement still applicable?",
+      help:"Consider whether the business process, records schedule, policy, or retention authority has changed.",
+      yes:"Yes — the current retention requirement still applies",
+      changed:"No — the requirement or authority may have changed"
+    },
+    {
+      key:"quality",
+      title:"Have there been meaningful new quality concerns?",
+      help:"Think about recurring errors, missing information, unusual values, complaints, reconciliation problems, or changes to the source.",
+      yes:"No — no meaningful new quality concerns",
+      changed:"Yes — quality should be reassessed"
+    },
+    {
+      key:"active_use",
+      title:"Is this information still actively used?",
+      help:"Consider whether the business still creates, updates, relies on, or needs this information.",
+      yes:"Yes — it is still actively used",
+      changed:"No — it may no longer be actively used"
+    }
+  ];
+
+  const q=questions[step-1];
+  const changedKeys=Object.entries(answers).filter(([k,v])=>{
+    if(k==="active_use") return v==="no" || v==="unsure";
+    return v==="changed" || v==="unsure";
+  }).map(([k])=>k);
+
+  function answer(value){
+    setAnswers({...answers,[q.key]:value});
+  }
+
+  function next(){
+    if(step<questions.length) setStep(step+1);
+    else setStep(questions.length+1);
+  }
+
+  function back(){
+    if(step>1) setStep(step-1);
+  }
+
+  async function submitReview(){
+    const response=await api(`/assets/${a.asset_id}/reviews`,userEmail,{
+      method:"POST",
+      body:JSON.stringify({
+        answers,
+        change_summary:notes.trim()||null,
+        review_interval_days:365
+      })
+    });
+    setResult(response);
+    setReviewData(await api(`/assets/${a.asset_id}/reviews`,userEmail));
+    setMode("COMPLETE");
+    setGuidedTask?.(null);
+  }
+
+  if(mode==="REVIEW"){
+    return <section className="panel periodic-review-guide">
+      <div className="wizard-head">
+        <div>
+          <div className="eyebrow">Guided task · Review what changed</div>
+          <h2>Keep this stewardship information current</h2>
+          <p className="lead">You do not need to redo the whole process. Answer a short set of questions, and AI Data Steward will reopen only the areas that need attention.</p>
+        </div>
+        <span>{step<=questions.length?`Step ${step} of ${questions.length}`:"Review"}</span>
+      </div>
+
+      {step<=questions.length&&q&&<>
+        <h3>{q.title}</h3>
+        <p className="lead">{q.help}</p>
+        <div className="review-choice-grid">
+          <button type="button" className={answers[q.key]==="same"?"review-choice selected":"review-choice"} onClick={()=>answer("same")}><b>{q.yes}</b><span>No follow-up will be created for this area.</span></button>
+          <button type="button" className={answers[q.key]===("active_use"===q.key?"no":"changed")?"review-choice selected changed":"review-choice"} onClick={()=>answer(q.key==="active_use"?"no":"changed")}><b>{q.changed}</b><span>AI Data Steward will create a focused follow-up task.</span></button>
+          <button type="button" className={answers[q.key]==="unsure"?"review-choice selected unsure":"review-choice"} onClick={()=>answer("unsure")}><b>I’m not sure</b><span>We will create a follow-up so you can verify this rather than guessing.</span></button>
+        </div>
+        <div className="button-row"><button disabled={step===1} onClick={back}>Back</button><button className="primary" disabled={!answers[q.key]} onClick={next}>{step===questions.length?"Review answers":"Continue"}</button></div>
+      </>}
+
+      {step===questions.length+1&&<>
+        <h3>Review complete — here is what needs follow-up</h3>
+        {changedKeys.length===0?<div className="education strong"><b>No changes identified.</b><p>Your existing stewardship decisions can remain in place. Completing this review will record that they were reconfirmed today.</p></div>:<>
+          <p className="lead">You identified {changedKeys.length} area{changedKeys.length===1?"":"s"} that may need attention. You do not need to fix them inside this review; AI Data Steward will create focused next steps.</p>
+          <div className="review-followup-list">
+            {changedKeys.map(k=><div key={k}><span>Needs follow-up</span><b>{questions.find(x=>x.key===k)?.title}</b></div>)}
+          </div>
+        </>}
+        <label>Anything else you want to record about this review? <span className="muted">(optional)</span><textarea rows="4" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Add context about what changed, what you verified, or what someone should know next."/></label>
+        <div className="education"><b>What happens after you finish?</b><p>This review is recorded in history, the next review is scheduled for one year from now, and only the areas you marked as changed or uncertain become new tasks.</p></div>
+        <div className="button-row"><button onClick={()=>setStep(questions.length)}>Back</button><button className="primary" onClick={submitReview}>Complete review</button></div>
+      </>}
+    </section>;
+  }
+
+  if(mode==="COMPLETE"){
+    return <section className="panel">
+      <div className="completion-state">
+        <div className="completion-mark">✓</div>
+        <div><h2>Periodic review complete</h2><p>{result?.message||"Your review was recorded."}</p></div>
+      </div>
+      {result?.follow_up_tasks?.length>0&&<div className="review-followup-list">
+        {result.follow_up_tasks.map(t=><div key={t}><span>Added to My Next Steps</span><b>{t}</b></div>)}
+      </div>}
+      <div className="button-row"><button onClick={()=>setMode("SUMMARY")}>View review history</button></div>
+    </section>;
+  }
+
+  const latest=reviewData?.latest;
+  const due=reviewData?.next_review_due ? new Date(reviewData.next_review_due) : null;
+  return <section className="panel">
+    <div className="task-head">
+      <div>
+        <div className="eyebrow">Review & maintain</div>
+        <h2>Keep this information current over time</h2>
+        <p className="lead">Stewardship is not one-and-done. Periodic reviews confirm that the information, ownership, locations, rules, and quality context still reflect reality.</p>
+      </div>
+      <button className="primary" onClick={()=>{setAnswers({});setNotes("");setResult(null);setStep(1);setMode("REVIEW")}}>{latest?"Review what changed":"Complete first review"}</button>
+    </div>
+
+    <div className="review-status-grid">
+      <div><span>Last reviewed</span><b>{latest?.reviewed_at?new Date(latest.reviewed_at).toLocaleDateString():"Not reviewed yet"}</b></div>
+      <div><span>Next review</span><b>{due?due.toLocaleDateString():"Not scheduled"}</b></div>
+      <div><span>Status</span><b>{reviewData?.is_due?"Review due":"Current"}</b></div>
+    </div>
+
+    {latest&&<div className="education strong"><b>Most recent review</b><p>{latest.change_summary||"The steward completed the review without additional notes."}</p></div>}
+
+    <h3>Review history</h3>
+    {(reviewData?.history||[]).length===0?<div className="empty">No periodic reviews have been completed yet.</div>:<div className="review-history">
+      {reviewData.history.map(r=>{
+        const flagged=Object.entries(r.answers||{}).filter(([k,v])=>k==="active_use"?["no","unsure"].includes(v):["changed","unsure"].includes(v)).length;
+        return <div key={r.id}><div><b>{new Date(r.reviewed_at).toLocaleDateString()}</b><span>{flagged===0?"No changes identified":`${flagged} area${flagged===1?"":"s"} needed follow-up`}</span></div><small>Next review: {new Date(r.next_review_due).toLocaleDateString()}</small></div>;
+      })}
+    </div>}
+  </section>;
+}
+
+function UnderstandingGuide({asset,userEmail,doAction}) {
+  const a=asset.asset;
+  const existing=asset.metadata||{};
+  const [step,setStep]=useState(1);
+  const [businessArea,setBusinessArea]=useState(existing.business_area||existing.business_domain||"");
+  const [audienceNeed,setAudienceNeed]=useState("");
+  const [searchTerms,setSearchTerms]=useState(
+    Array.isArray(existing.search_terms) ? existing.search_terms.join(", ") : (existing.search_terms||"")
+  );
+  const [updatePattern,setUpdatePattern]=useState(existing.update_frequency||"");
+  const [contactPoint,setContactPoint]=useState(existing.contact_point||"");
+  const [businessPurpose,setBusinessPurpose]=useState(a.business_definition||"");
+  const [suggestedTerms,setSuggestedTerms]=useState([]);
+
+  function buildSuggestions(){
+    const source=`${a.name||""} ${businessPurpose} ${businessArea} ${audienceNeed}`.toLowerCase();
+    const terms=new Set();
+
+    const add=(...xs)=>xs.forEach(x=>terms.add(x));
+    if(/corporat|business registration|filing/.test(source)) add("corporations","business registration","corporate filings","registered agent");
+    if(/licen[cs]|permit|credential/.test(source)) add("licenses","applications","credentials","permits");
+    if(/payment|fee|invoice|billing/.test(source)) add("payments","fees","transactions");
+    if(/employee|human resource|personnel|payroll/.test(source)) add("employees","human resources","personnel");
+    if(/contract|vendor|procure/.test(source)) add("vendors","contracts","procurement");
+    if(/complaint|disciplin|enforcement/.test(source)) add("complaints","disciplinary actions","enforcement");
+    if(/case|client|participant/.test(source)) add("cases","clients","participants");
+    if(/report|dashboard|performance/.test(source)) add("reports","performance","operations");
+
+    for (const word of (a.name||"").split(/\s+/)) {
+      const clean=word.replace(/[^A-Za-z0-9-]/g,"").toLowerCase();
+      if(clean.length>3) terms.add(clean);
+    }
+    setSuggestedTerms([...terms].slice(0,8));
+    setStep(4);
+  }
+
+  function toggleTerm(term){
+    const current=searchTerms.split(",").map(x=>x.trim()).filter(Boolean);
+    const lower=current.map(x=>x.toLowerCase());
+    const next=lower.includes(term.toLowerCase())
+      ? current.filter(x=>x.toLowerCase()!==term.toLowerCase())
+      : [...current,term];
+    setSearchTerms(next.join(", "));
+  }
+
+  async function save(){
+    const payload={
+      business_area: businessArea.trim()||null,
+      search_terms: searchTerms.split(",").map(x=>x.trim()).filter(Boolean),
+      update_frequency: updatePattern||null,
+      contact_point: contactPoint.trim()||null
+    };
+
+    // Existing API endpoint used by the previous metadata form.
+    await doAction(
+      ()=>api(`/assets/${a.asset_id}/metadata`,userEmail,{
+        method:"PATCH",
+        body:JSON.stringify(payload)
+      }),
+      "Information description saved."
+    );
+    setStep(6);
+  }
+
+  return <section className="panel understanding-guide">
+    <div className="wizard-head">
+      <div>
+        <div className="eyebrow">Guided task · Help others understand it</div>
+        <h2>Describe this information in business language</h2>
+        <p className="lead">You do not need to know metadata standards. Answer the same kinds of questions you would answer for a coworker who had never seen this information before.</p>
+      </div>
+      <span>Step {step} of 6</span>
+    </div>
+
+    {step===1&&<>
+      <h3>What part of the organization’s work is this information about?</h3>
+      <p className="lead">Use the business area people would recognize—not the database, software vendor, or technical team.</p>
+      <div className="choice-grid">
+        {["Business registration","Professional licensing","Finance","Human resources","Public safety","Operations","Legal / compliance","Other"].map(v=><button key={v} type="button" className={businessArea===v?"choice selected":"choice"} onClick={()=>setBusinessArea(v)}>{v}</button>)}
+      </div>
+      <label>Or describe the business area<input value={businessArea} onChange={e=>setBusinessArea(e.target.value)} placeholder="e.g., Division of Corporations / Business Registration"/></label>
+      <div className="button-row"><button className="primary" disabled={!businessArea.trim()} onClick={()=>setStep(2)}>Continue</button></div>
+    </>}
+
+    {step===2&&<>
+      <h3>What would another employee need to know to understand this information?</h3>
+      <p className="lead">Describe what it represents, what it is used for, and anything someone could easily misunderstand.</p>
+      <textarea rows="5" value={businessPurpose} onChange={e=>setBusinessPurpose(e.target.value)} placeholder="For example: This information records corporation registrations, filing status, registered agents, and filing history used by agency staff and the public to verify business standing."/>
+      <div className="education"><b>Why we ask this</b><p>This becomes the plain-language explanation people see when they discover the information later.</p></div>
+      <div className="button-row"><button onClick={()=>setStep(1)}>Back</button><button className="primary" disabled={!businessPurpose.trim()} onClick={()=>setStep(3)}>Continue</button></div>
+    </>}
+
+    {step===3&&<>
+      <h3>If someone needed this information, what would they probably search for?</h3>
+      <p className="lead">Think like a coworker, not a catalog administrator. What words would they type because they know the business topic but not the exact system name?</p>
+      <textarea rows="4" value={audienceNeed} onChange={e=>setAudienceNeed(e.target.value)} placeholder="e.g., corporation lookup, business registration, registered agent, filing status"/>
+      <div className="button-row"><button onClick={()=>setStep(2)}>Back</button><button className="primary" disabled={!audienceNeed.trim()} onClick={buildSuggestions}>Suggest search terms</button></div>
+    </>}
+
+    {step===4&&<>
+      <h3>Suggested search terms</h3>
+      <p className="lead">These are suggestions based on the business information you described. Keep the ones people would actually use and add any we missed.</p>
+      <div className="suggested-term-grid">
+        {suggestedTerms.map(t=><button type="button" key={t} className={searchTerms.toLowerCase().split(",").map(x=>x.trim()).includes(t.toLowerCase())?"term-chip selected":"term-chip"} onClick={()=>toggleTerm(t)}>{t}</button>)}
+      </div>
+      <label>Search terms<input value={searchTerms} onChange={e=>setSearchTerms(e.target.value)} placeholder="Comma-separated terms people would search for"/></label>
+      <div className="button-row"><button onClick={()=>setStep(3)}>Back</button><button className="primary" disabled={!searchTerms.trim()} onClick={()=>setStep(5)}>Continue</button></div>
+    </>}
+
+    {step===5&&<>
+      <h3>How does this information change, and who can answer questions about it?</h3>
+      <p className="lead">These answers help people know whether the information is current and where to go when they need business context.</p>
+      <label>How does it change?
+        <select value={updatePattern} onChange={e=>setUpdatePattern(e.target.value)}>
+          <option value="">Choose one</option>
+          <option value="CONTINUOUS">Continuously as work occurs</option>
+          <option value="DAILY">Daily</option>
+          <option value="WEEKLY">Weekly</option>
+          <option value="MONTHLY">Monthly</option>
+          <option value="QUARTERLY">Quarterly</option>
+          <option value="ANNUALLY">Annually</option>
+          <option value="EVENT_DRIVEN">Only when a business event happens</option>
+          <option value="UNKNOWN">I’m not sure</option>
+        </select>
+      </label>
+      <label>If someone has a business question, who should they contact?<input value={contactPoint} onChange={e=>setContactPoint(e.target.value)} placeholder="Person, team, or business office"/></label>
+
+      <div className="understanding-summary">
+        <div><span>Business area</span><b>{businessArea}</b></div>
+        <div><span>Search terms</span><b>{searchTerms||"Not entered"}</b></div>
+        <div><span>How it changes</span><b>{updatePattern||"Not selected"}</b></div>
+        <div><span>Contact</span><b>{contactPoint||"Not entered"}</b></div>
+      </div>
+
+      <div className="button-row"><button onClick={()=>setStep(4)}>Back</button><button className="primary" disabled={!updatePattern||!contactPoint.trim()} onClick={save}>Save this description</button></div>
+
+      <details className="advanced-details">
+        <summary>What information will AI Data Steward record?</summary>
+        <p className="muted">Behind the scenes, these answers become structured description and discoverability information used by the organization-wide information catalog. You do not need to manage those fields directly.</p>
+      </details>
+    </>}
+
+    {step===6&&<>
+      <div className="completion-state">
+        <div className="completion-mark">✓</div>
+        <div>
+          <h3>This information is easier for others to understand and find.</h3>
+          <p>AI Data Steward recorded the business area, discovery terms, update pattern, and business contact without requiring you to work with metadata standards directly.</p>
+        </div>
+      </div>
+      <div className="button-row"><button onClick={()=>setStep(1)}>Review or update these answers</button></div>
+    </>}
+  </section>;
 }
 
 function GovernanceGuide({asset,gov,setGov,userEmail,doAction,guidedTask,setGuidedTask}) {
@@ -505,9 +1245,9 @@ function PublicationPanel({asset,userEmail,doAction}) {
   </section>;
 }
 
-function ReviewQueue({assets,userEmail,doAction,onOpen}) { const review=assets.filter(a=>["IN_REVIEW","APPROVED","NEEDS_UPDATE"].includes(a.publication.status)); return <><h1>Review Queue</h1><p className="lead">Assets waiting for governance approval or enterprise publication.</p>{review.length===0&&<div className="empty">Nothing is waiting for review.</div>}{review.map(a=><div className="review-row" key={a.asset.asset_id}><div><b>{a.asset.name}</b><span>{a.readiness.score}% governance readiness · {a.quality?.overall_score??"—"}% quality</span></div><Status value={a.publication.status}/><div className="button-row"><button onClick={()=>onOpen(a.asset.asset_id)}>Inspect</button>{a.publication.status==="IN_REVIEW"&&<><button onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the remaining governance questions."})}),"Returned for changes.")}>Return</button><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved.")}>Approve</button></>}{a.publication.status==="APPROVED"&&<button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish</button>}</div></div>)}</> }
+function ReviewQueue({assets,userEmail,doAction,onOpen}) { const review=assets.filter(a=>["IN_REVIEW","APPROVED","NEEDS_UPDATE"].includes(a.publication.status)); return <><h1>Review Queue</h1><p className="lead">Assets waiting for governance approval or enterprise publication.</p>{review.length===0&&<div className="empty">Nothing is waiting for review.</div>}{review.map(a=><div className="review-row" key={a.asset.asset_id}><div><b>{a.asset.name}</b><span>{a.readiness.score}% stewardship completeness · {a.quality?.overall_score??"—"}% quality</span></div><Status value={a.publication.status}/><div className="button-row"><button onClick={()=>onOpen(a.asset.asset_id)}>Inspect</button>{a.publication.status==="IN_REVIEW"&&<><button onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/reject`,userEmail,{method:"POST",body:JSON.stringify({comments:"Please address the remaining governance questions."})}),"Returned for changes.")}>Return</button><button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/approve`,userEmail,{method:"POST",body:JSON.stringify({comments:"Approved."})}),"Approved.")}>Approve</button></>}{a.publication.status==="APPROVED"&&<button className="primary" onClick={()=>doAction(()=>api(`/assets/${a.asset.asset_id}/publish`,userEmail,{method:"POST"}),"Published.")}>Publish</button>}</div></div>)}</> }
 
-function PublicationHistory({assets,selectedAssetId,setSelectedAssetId,userEmail}) { const [history,setHistory]=useState(null); useEffect(()=>{if(selectedAssetId)api(`/assets/${selectedAssetId}/history`,userEmail).then(setHistory)},[selectedAssetId,userEmail]); return <><h1>Publication History</h1><p className="lead">Approved releases are immutable snapshots. DCAT JSON-LD is generated only when the release crosses the publication boundary.</p><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select><div className="two-col"><section className="panel"><h2>Audit timeline</h2>{history?.events?.length?history.events.map(e=><div className="timeline" key={e.id}><b>{e.event_type.replaceAll("_"," ")}</b><span>{e.from_status||"—"} → {e.to_status||"—"}</span><small>{e.created_at}</small></div>):<p>No events yet.</p>}</section><section className="panel"><h2>Immutable releases</h2>{history?.releases?.length?history.releases.map(r=><details key={r.id}><summary>Release v{r.version_number} {r.published_at?"· Published":"· Approved"}</summary><p><b>Snapshot hash:</b> {r.snapshot_hash}</p>{r.ckan_name&&<p><b>Catalog name:</b> {r.ckan_name}</p>}{r.publication_result?.dcat_payload&&<><p><b>Generated DCAT JSON-LD</b></p><pre>{JSON.stringify(r.publication_result.dcat_payload,null,2)}</pre></>}</details>):<p>No releases yet.</p>}</section></div></> }
+function PublicationHistory({assets,selectedAssetId,setSelectedAssetId,userEmail}) { const [history,setHistory]=useState(null); useEffect(()=>{if(selectedAssetId)api(`/assets/${selectedAssetId}/history`,userEmail).then(setHistory)},[selectedAssetId,userEmail]); return <><h1>Publishing History</h1><p className="lead">Approved releases are immutable snapshots. DCAT JSON-LD is generated only when the release crosses the publication boundary.</p><select value={selectedAssetId||""} onChange={e=>setSelectedAssetId(Number(e.target.value))}>{assets.map(x=><option key={x.asset.asset_id} value={x.asset.asset_id}>{x.asset.name}</option>)}</select><div className="two-col"><section className="panel"><h2>Audit timeline</h2>{history?.events?.length?history.events.map(e=><div className="timeline" key={e.id}><b>{e.event_type.replaceAll("_"," ")}</b><span>{e.from_status||"—"} → {e.to_status||"—"}</span><small>{e.created_at}</small></div>):<p>No events yet.</p>}</section><section className="panel"><h2>Immutable releases</h2>{history?.releases?.length?history.releases.map(r=><details key={r.id}><summary>Release v{r.version_number} {r.published_at?"· Published":"· Approved"}</summary><p><b>Snapshot hash:</b> {r.snapshot_hash}</p>{r.ckan_name&&<p><b>Catalog name:</b> {r.ckan_name}</p>}{r.publication_result?.dcat_payload&&<><p><b>Generated DCAT JSON-LD</b></p><pre>{JSON.stringify(r.publication_result.dcat_payload,null,2)}</pre></>}</details>):<p>No releases yet.</p>}</section></div></> }
 
 function Metric({label,value}) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div> }
 function Status({value}) { return <span className={`status status-${(value||"").toLowerCase()}`}>{(value||"").replaceAll("_"," ")}</span> }

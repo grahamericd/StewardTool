@@ -39,6 +39,11 @@ class ResourceCreate(BaseModel):
     is_authoritative: bool = False
 
 
+class OfficialSourceDecision(BaseModel):
+    resource_id: int
+    decision_basis: str | None = None
+
+
 class MetadataUpsert(BaseModel):
     metadata_key: str
     metadata_value: Any
@@ -130,3 +135,10 @@ class QualityDecisionCreate(BaseModel):
 class HygieneFindingDecisionCreate(BaseModel):
     decision_type: str
     notes: str | None = None
+
+
+
+class PeriodicReviewCreate(BaseModel):
+    answers: dict[str, str]
+    change_summary: str | None = None
+    review_interval_days: int = 365
