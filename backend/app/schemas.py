@@ -125,3 +125,8 @@ class QualityRuleStatusUpdate(BaseModel):
 class QualityDecisionCreate(BaseModel):
     decision_type: str
     notes: str | None = None
+
+
+class HygieneFindingDecisionCreate(BaseModel):
+    decision_type: str
+    notes: str | None = None

@@ -15,12 +15,13 @@ from ..schemas import (
     AssetCreate, AssetGovernanceUpdate, MetadataUpsert, QualityProfileCreate, QualityResultCreate,
     QualityRuleCreate, RejectRequest, ResourceCreate, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
     QualityEngineLinkCreate, QualityAssessmentRequest, QualityRunRequest, QualityRuleStatusUpdate, QualityDecisionCreate,
+    HygieneFindingDecisionCreate,
 )
 from ..services.publication import approve, mark_needs_update_if_published, publish, reject, submit_for_review
 from ..services.readiness import calculate_readiness
 from ..services.snapshot import build_asset_snapshot
 from ..services.task_service import sync_tasks
-from ..services.quality_orchestrator import assess_resource, decide_issue, ensure_link, run_tests, _source_mapping_from_link
+from ..services.quality_orchestrator import assess_resource, decide_issue, decide_hygiene_finding, enrich_hygiene_issue, ensure_link, run_tests, _source_mapping_from_link
 from ..integrations.testgen.client import TestGenClient, TestGenError
 
 router = APIRouter()
@@ -212,6 +213,15 @@ def quality(asset_id: int, ctx=Depends(current_context), db: Session = Depends(g
         result.append({"id": rule.id, "rule_name": rule.rule_name, "rule_type": rule.rule_type, "plain_language_rule": rule.plain_language_rule, "status": rule.status, "rule_definition": rule.rule_definition, "latest_result": None if not latest else {"result_status": latest.result_status, "evaluated_count": latest.evaluated_count, "failed_count": latest.failed_count, "score": latest.score, "details": latest.details, "evaluated_at": latest.evaluated_at}})
     links = db.scalars(select(QualityEngineResource).where(QualityEngineResource.organization_id == ctx["organization_id"], QualityEngineResource.resource_id.in_([x.resource_id for x in asset.resources] or [-1]))).all()
     issues = db.scalars(select(QualityIssue).where(QualityIssue.asset_id == asset.id).order_by(QualityIssue.created_at.desc())).all()
+    changed = False
+    for issue in issues:
+        if issue.issue_type == "HYGIENE_FINDING":
+            before = dict(issue.details or {})
+            enrich_hygiene_issue(issue)
+            if issue.details != before:
+                changed = True
+    if changed:
+        db.commit()
     return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "connection_id": x.connection_id, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "source_mapping": _source_mapping_from_link(x), "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": i.details, "created_at": i.created_at} for i in issues]}
 
 
@@ -339,12 +349,49 @@ def run_quality_checks(asset_id: int, payload: QualityRunRequest, ctx=Depends(re
 
 
 @router.post("/quality/issues/{issue_id}/decision")
-def quality_issue_decision(issue_id: int, payload: QualityDecisionCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+def quality_issue_decision(issue_id: int, payload: QualityDecisionCreate, HygieneFindingDecisionCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
     issue = db.get(QualityIssue, issue_id)
     if not issue or issue.organization_id != ctx["organization_id"]:
         raise HTTPException(status_code=404, detail="Quality issue not found")
     decide_issue(db, issue, ctx["user"].id, payload.decision_type, payload.notes)
     return {"success": True, "issue_id": issue.id, "status": issue.status, "decision": payload.decision_type}
+
+
+
+
+@router.post("/quality/issues/{issue_id}/findings/{finding_fingerprint}/decision")
+def hygiene_finding_decision(
+    issue_id: int,
+    finding_fingerprint: str,
+    payload: HygieneFindingDecisionCreate,
+    ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")),
+    db: Session = Depends(get_db),
+):
+    issue = db.get(QualityIssue, issue_id)
+    if not issue or issue.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Quality issue not found")
+    if issue.issue_type != "HYGIENE_FINDING":
+        raise HTTPException(
+            status_code=400,
+            detail="This endpoint is only for TestGen profiling findings.",
+        )
+    try:
+        decide_hygiene_finding(
+            db,
+            issue,
+            ctx["user"].id,
+            finding_fingerprint,
+            payload.decision_type,
+            payload.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "success": True,
+        "issue_id": issue.id,
+        "status": issue.status,
+        "details": issue.details,
+    }
 
 
 @router.post("/assets/{asset_id}/submit")

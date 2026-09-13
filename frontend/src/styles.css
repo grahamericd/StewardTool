@@ -60,3 +60,21 @@
 .quality-context>div{border:1px solid #dfe5ec;border-radius:10px;padding:11px 13px;background:#fff}
 .quality-context span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin-bottom:4px}
 .quality-context b{font-size:14px;overflow-wrap:anywhere}
+
+.finding-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:12px 0}
+.finding-progress{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 14px;border:1px solid #dfe5ec;border-radius:10px;background:#f8fafc;margin:12px 0 16px}
+.finding-progress span{color:#667085;font-size:13px}
+.finding-list{display:grid;gap:12px}
+.steward-finding{border:1px solid #dfe5ec;border-left:4px solid #d99a00;border-radius:10px;padding:16px;background:#fff}
+.steward-finding.status-resolved{border-left-color:#2e7d32;background:#fbfffb}
+.steward-finding.status-escalated{border-left-color:#7b61a8;background:#fcfaff}
+.finding-status{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:#667085}
+.technical-detail{margin:10px 0}
+.technical-detail summary{cursor:pointer;color:#667085;font-size:13px}
+.technical-detail code{display:block;margin-top:6px;padding:8px 10px;background:#f6f8fb;border-radius:8px;overflow-wrap:anywhere}
+.finding-decision{border-top:3px solid #2077b4}
+@media(max-width:700px){.finding-progress{align-items:flex-start;flex-direction:column}}
+
+.next-step-callout{display:flex;flex-direction:column;gap:5px;padding:14px 16px;margin:10px 0 14px;border-left:4px solid #2077b4;border-radius:8px;background:#f2f8fc}
+.next-step-callout b{font-size:14px}
+.next-step-callout span{font-size:14px;line-height:1.45;color:#344054}

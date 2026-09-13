@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import hashlib
+import json
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -403,6 +405,393 @@ def _quality_score_from_results(items):
     return 0.0
 
 
+
+def _recursive_values(payload, keys):
+    values = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in keys and value not in (None, "", [], {}):
+                values.append(value)
+            if isinstance(value, (dict, list)):
+                values.extend(_recursive_values(value, keys))
+    elif isinstance(payload, list):
+        for value in payload:
+            values.extend(_recursive_values(value, keys))
+    return values
+
+
+def _first_recursive_value(payload, keys, default=None):
+    values = _recursive_values(payload, set(keys))
+    return values[0] if values else default
+
+
+def _display_column(raw):
+    value = _first_recursive_value(
+        raw,
+        (
+            "column_name", "column", "field_name", "field",
+            "attribute_name", "attribute", "name",
+        ),
+    )
+    if isinstance(value, dict):
+        value = (
+            value.get("name")
+            or value.get("column_name")
+            or value.get("column")
+        )
+    return str(value).strip() if value not in (None, "") else "This field"
+
+
+def _hygiene_kind(raw):
+    value = _first_recursive_value(
+        raw,
+        (
+            "issue_type", "hygiene_type", "hygiene_issue_type",
+            "hygiene_issue", "issue", "type", "category",
+            "issue_name", "rule_name", "test_name",
+        ),
+        "profiling finding",
+    )
+    if isinstance(value, dict):
+        value = (
+            value.get("name")
+            or value.get("value")
+            or value.get("type")
+            or "profiling finding"
+        )
+    return str(value).strip()
+
+
+def _hygiene_count(raw):
+    value = _first_recursive_value(
+        raw,
+        (
+            "affected_count", "failed_count", "row_count", "record_count",
+            "records_affected", "count", "issue_count", "occurrence_count",
+        ),
+    )
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _hygiene_examples(raw):
+    values = _recursive_values(
+        raw,
+        {
+            "sample_values", "example_values", "examples",
+            "sample", "values", "value",
+        },
+    )
+    flattened = []
+    for value in values:
+        if isinstance(value, list):
+            flattened.extend(value)
+        elif isinstance(value, (str, int, float)) or value is None:
+            flattened.append(value)
+
+    result = []
+    seen = set()
+    for value in flattened:
+        marker = repr(value)
+        if marker not in seen:
+            seen.add(marker)
+            result.append(value)
+        if len(result) >= 6:
+            break
+    return result
+
+
+def _hygiene_plain_language(column, kind):
+    text = kind.lower()
+    column_label = column if column != "This field" else "This field"
+
+    patterns = [
+        (
+            ("null", "missing", "blank", "empty"),
+            f"{column_label} has missing values",
+            "Missing values can make records incomplete and can break downstream matching, reporting, or decisions.",
+            "Confirm whether the field is required. If it is, trace why values are missing and decide whether the source process or a quality expectation should change.",
+            "COMPLETENESS",
+        ),
+        (
+            ("duplicate", "non-unique", "not unique"),
+            f"{column_label} may contain duplicate values",
+            "Unexpected duplicates can cause the same business entity or transaction to be counted or acted on more than once.",
+            "Check whether duplicates are allowed for this field. If not, review examples and identify whether the duplication comes from the source or the load process.",
+            "UNIQUENESS",
+        ),
+        (
+            ("whitespace", "leading space", "trailing space"),
+            f"{column_label} contains extra spacing",
+            "Extra spaces can make identical values look different during matching, filtering, and reporting.",
+            "Review examples and decide whether the source should be corrected or whether whitespace should be standardized during ingestion.",
+            "CONSISTENCY",
+        ),
+        (
+            ("case", "capital", "upper", "lower"),
+            f"{column_label} uses inconsistent capitalization",
+            "Inconsistent capitalization can split what should be one category into several apparent values.",
+            "Confirm the expected capitalization standard and decide whether to standardize values or document the variation as acceptable.",
+            "CONSISTENCY",
+        ),
+        (
+            ("format", "pattern", "regex", "mask"),
+            f"{column_label} has inconsistent formatting",
+            "Different formats can make validation, matching, search, and analytics less reliable.",
+            "Review the observed formats, identify the business-approved format, and decide whether the data or the quality expectation needs to change.",
+            "VALIDITY",
+        ),
+        (
+            ("outlier", "unusual", "anomaly", "extreme"),
+            f"{column_label} contains unusual values",
+            "Unusual values may be legitimate exceptions, data-entry mistakes, or evidence that the field is being used inconsistently.",
+            "Review the unusual examples with someone who understands the business process and classify them as valid exceptions or corrections.",
+            "VALIDITY",
+        ),
+        (
+            ("length", "too long", "too short"),
+            f"{column_label} has unusual value lengths",
+            "Unexpected lengths can indicate truncation, concatenated fields, misplaced values, or inconsistent entry practices.",
+            "Compare the unusual values with the expected business format and determine whether the source data or the field definition needs correction.",
+            "VALIDITY",
+        ),
+        (
+            ("special", "character", "punctuation", "symbol"),
+            f"{column_label} contains unexpected characters",
+            "Unexpected characters can interfere with matching, exports, validation, or downstream systems.",
+            "Review examples and determine whether the characters are meaningful business data or should be standardized or removed.",
+            "VALIDITY",
+        ),
+        (
+            ("constant", "single value", "low cardinality", "no variation"),
+            f"{column_label} has little or no variation",
+            "A field that rarely changes may be correct, but it can also indicate a default value, incomplete capture, or a field that is no longer useful.",
+            "Confirm whether this field is expected to have more than one value. If not, document the behavior; otherwise investigate the source process.",
+            "PROFILE",
+        ),
+        (
+            ("semantic", "meaning", "type detection"),
+            f"Review the detected meaning of {column_label}",
+            "The detected business meaning influences validation, classification, and the expectations AI Data Steward may suggest.",
+            "Confirm that the detected meaning matches how the business actually uses this field.",
+            "SEMANTIC",
+        ),
+    ]
+
+    for keywords, title, why, action, category in patterns:
+        if any(keyword in text for keyword in keywords):
+            return title, why, action, category
+
+    clean_kind = kind.replace("_", " ").replace("-", " ").strip()
+    clean_kind = " ".join(clean_kind.split())
+    title = (
+        f"Review {column_label}: {clean_kind}"
+        if clean_kind and clean_kind.lower() != "profiling finding"
+        else f"Review an unusual pattern in {column_label}"
+    )
+    return (
+        title,
+        "TestGen found a data characteristic that may be normal for this source or may indicate a quality concern.",
+        "Review the evidence, confirm the expected business behavior, and decide whether this is acceptable, needs correction, needs a quality expectation, or needs expert review.",
+        "PROFILE",
+    )
+
+
+def _hygiene_fingerprint(raw, index):
+    identity = {
+        "column": _display_column(raw).lower(),
+        "kind": _hygiene_kind(raw).lower(),
+    }
+    # If TestGen exposes a durable ID, include it. Otherwise column+kind gives
+    # stable decisions across repeat profiles even when counts/examples change.
+    external_id = _first_recursive_value(
+        raw,
+        ("id", "issue_id", "hygiene_issue_id", "definition_id"),
+    )
+    if external_id not in (None, ""):
+        identity["external_id"] = str(external_id)
+
+    if identity["column"] == "this field" and identity["kind"] == "profiling finding":
+        identity["fallback"] = index
+
+    digest = hashlib.sha1(
+        json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"hygiene-item:{digest}"
+
+
+def _normalize_hygiene_findings(hygiene_items, previous_findings=None):
+    previous = {
+        item.get("fingerprint"): item
+        for item in (previous_findings or [])
+        if isinstance(item, dict) and item.get("fingerprint")
+    }
+
+    findings = []
+    for index, raw in enumerate(hygiene_items, start=1):
+        if not isinstance(raw, dict):
+            raw = {"value": raw}
+
+        column = _display_column(raw)
+        kind = _hygiene_kind(raw)
+        title, why, action, category = _hygiene_plain_language(column, kind)
+        fingerprint = _hygiene_fingerprint(raw, index)
+        prior = previous.get(fingerprint, {})
+
+        confidence = _first_recursive_value(
+            raw,
+            ("confidence", "confidence_level", "likelihood", "severity", "level"),
+        )
+        if isinstance(confidence, dict):
+            confidence = confidence.get("value") or confidence.get("name")
+
+        finding = {
+            "fingerprint": fingerprint,
+            "number": index,
+            "column": column,
+            "category": category,
+            "testgen_finding": kind,
+            "title": title,
+            "why_it_matters": why,
+            "recommended_action": action,
+            "affected_count": _hygiene_count(raw),
+            "confidence": str(confidence).upper() if confidence not in (None, "") else None,
+            "examples": _hygiene_examples(raw),
+            "review_status": prior.get("review_status", "PENDING"),
+            "decision": prior.get("decision"),
+            "notes": prior.get("notes"),
+            "reviewed_by": prior.get("reviewed_by"),
+            "reviewed_at": prior.get("reviewed_at"),
+        }
+        findings.append(finding)
+
+    return findings
+
+
+def _hygiene_summary(findings):
+    total = len(findings)
+    resolved = sum(
+        1 for item in findings
+        if item.get("review_status") == "RESOLVED"
+    )
+    escalated = sum(
+        1 for item in findings
+        if item.get("review_status") == "ESCALATED"
+    )
+    pending = max(0, total - resolved - escalated)
+    categories = {}
+    for item in findings:
+        category = item.get("category") or "PROFILE"
+        categories[category] = categories.get(category, 0) + 1
+    return {
+        "total": total,
+        "pending": pending,
+        "resolved": resolved,
+        "escalated": escalated,
+        "categories": categories,
+    }
+
+
+def enrich_hygiene_issue(issue: QualityIssue):
+    """Backfill Stage 3.5.2 steward findings from stored raw TestGen evidence."""
+    if issue.issue_type != "HYGIENE_FINDING":
+        return issue
+
+    details = dict(issue.details or {})
+    raw = details.get("hygiene_issues") or []
+    existing = details.get("steward_findings") or []
+    findings = _normalize_hygiene_findings(raw, existing)
+    details["steward_findings"] = findings
+    details["finding_summary"] = _hygiene_summary(findings)
+    details["finding_count"] = len(findings)
+    issue.details = details
+    return issue
+
+
+def decide_hygiene_finding(
+    db: Session,
+    issue: QualityIssue,
+    actor_id: int,
+    finding_fingerprint: str,
+    decision_type: str,
+    notes: str | None = None,
+):
+    allowed = {
+        "BAD_DATA",
+        "VALID_EXCEPTION",
+        "EXPECTATION_NEEDS_CHANGE",
+        "EXPERT_REVIEW",
+    }
+    if decision_type not in allowed:
+        raise ValueError("Unsupported hygiene finding decision.")
+
+    enrich_hygiene_issue(issue)
+    details = dict(issue.details or {})
+    findings = list(details.get("steward_findings") or [])
+
+    target = None
+    for finding in findings:
+        if finding.get("fingerprint") == finding_fingerprint:
+            target = finding
+            break
+    if not target:
+        raise ValueError("Profiling finding not found.")
+
+    target["decision"] = decision_type
+    target["notes"] = notes
+    target["reviewed_by"] = actor_id
+    target["reviewed_at"] = now().isoformat()
+    target["review_status"] = (
+        "ESCALATED" if decision_type == "EXPERT_REVIEW" else "RESOLVED"
+    )
+
+    summary = _hygiene_summary(findings)
+    details["steward_findings"] = findings
+    details["finding_summary"] = summary
+    issue.details = details
+
+    db.add(
+        QualityDecision(
+            issue_id=issue.id,
+            actor_id=actor_id,
+            decision_type=f"HYGIENE_{decision_type}",
+            notes=(
+                f"{target.get('title')}: {notes}"
+                if notes
+                else target.get("title")
+            ),
+        )
+    )
+
+    if summary["pending"] == 0:
+        if summary["escalated"] > 0:
+            issue.status = "NEEDS_EXPERT_REVIEW"
+            issue.resolved_at = None
+            issue.title = (
+                f"{summary['escalated']} profiling "
+                f"{'finding needs' if summary['escalated'] == 1 else 'findings need'} "
+                "expert review"
+            )
+            _reopen_issue_task(db, issue)
+        else:
+            issue.status = "RESOLVED"
+            issue.resolved_at = now()
+            _complete_issue_tasks(db, issue.id)
+    else:
+        issue.status = "OPEN"
+        issue.resolved_at = None
+        issue.title = (
+            f"Review {summary['pending']} of {summary['total']} "
+            "TestGen profiling findings"
+        )
+        _reopen_issue_task(db, issue)
+
+    db.commit()
+    return issue
+
+
 def _upsert_hygiene_issue(
     db: Session,
     *,
@@ -446,11 +835,24 @@ def _upsert_hygiene_issue(
         f"Review {len(hygiene_items)} TestGen profiling "
         f"{'finding' if len(hygiene_items) == 1 else 'findings'}"
     )
+    previous_findings = (
+        (canonical.details or {}).get("steward_findings", [])
+        if canonical
+        else []
+    )
+    steward_findings = _normalize_hygiene_findings(
+        hygiene_items,
+        previous_findings,
+    )
+    finding_summary = _hygiene_summary(steward_findings)
+
     details = {
         "fingerprint": f"hygiene:{asset.id}:{resource_id}",
         "finding_kind": "PROFILING",
         "latest_run_id": run_id,
         "hygiene_issues": hygiene_items,
+        "steward_findings": steward_findings,
+        "finding_summary": finding_summary,
         "potential_pii": pii_items,
         "potential_pii_count": len(pii_items),
         "profile_column_count": len(column_items),
@@ -458,11 +860,16 @@ def _upsert_hygiene_issue(
     }
 
     if canonical:
-        canonical.title = title
+        canonical.title = (
+            f"Review {finding_summary['pending']} of "
+            f"{finding_summary['total']} TestGen profiling findings"
+            if finding_summary["pending"] != finding_summary["total"]
+            else title
+        )
         canonical.description = (
             "TestGen profiling identified data characteristics that may "
-            "need stewardship review. This issue is updated when the "
-            "resource is profiled again instead of creating duplicate work."
+            "need stewardship review. AI Data Steward translates each "
+            "finding into plain language and lets you resolve them one at a time."
         )
         canonical.severity = "MEDIUM"
         canonical.status = "OPEN"
@@ -479,7 +886,8 @@ def _upsert_hygiene_issue(
             title=title,
             description=(
                 "TestGen profiling identified data characteristics that may "
-                "need stewardship review."
+                "need stewardship review. AI Data Steward translates each "
+                "finding into plain language and lets you resolve them one at a time."
             ),
             severity="MEDIUM",
             source="TESTGEN",
