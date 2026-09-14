@@ -1,3 +1,6 @@
+# Install with scripts/install_backup_timer.sh, which fills in the user and
+# project directory for this host. The previous version hard-coded one
+# developer's home directory and could not run anywhere else.
 [Unit]
 Description=AI Data Steward PostgreSQL backup
 Requires=docker.service
@@ -5,6 +8,10 @@ After=docker.service
 
 [Service]
 Type=oneshot
-User=eric-graham
-WorkingDirectory=/home/eric-graham/projects/STEWARD
-ExecStart=/home/eric-graham/projects/STEWARD/scripts/backup_postgres.sh
+User=__BACKUP_USER__
+WorkingDirectory=__PROJECT_DIR__
+# Optional: BACKUP_DIR and BACKUP_RETENTION_DAYS are read from here.
+EnvironmentFile=-__PROJECT_DIR__/.env.backup
+ExecStart=__PROJECT_DIR__/scripts/backup_postgres.sh
+# Surface failures instead of leaving them in the journal only.
+OnFailure=ai-data-steward-backup-failed.service

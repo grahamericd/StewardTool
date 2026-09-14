@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..auth import current_context, require_roles
@@ -121,6 +121,35 @@ def _task_bucket(task):
     return "NOW"
 
 
+# Ordering by the priority string alone sorted alphabetically, which put LOW
+# above MEDIUM in a list the UI presents as "start at the top".
+TASK_PRIORITY_ORDER = case(
+    (StewardshipTask.priority == "HIGH", 0),
+    (StewardshipTask.priority == "MEDIUM", 1),
+    else_=2,
+)
+
+
+def latest_quality_profile(asset):
+    """The most recent profile, rather than whatever the relationship yields first."""
+    profiles = [p for p in asset.quality_profiles if p.profiled_at]
+    if not profiles:
+        return asset.quality_profiles[0] if asset.quality_profiles else None
+    return max(profiles, key=lambda p: p.profiled_at)
+
+
+
+# The raw engine payloads hold sample values, column statistics and TestGen's
+# potential-PII list. The UI works from the derived findings, so the raw blobs
+# stay in the database for enrichment and are not served to every reader.
+RAW_ENGINE_DETAIL_KEYS = ("hygiene_issues", "profile_columns", "potential_pii")
+
+
+def public_issue_details(details):
+    if not isinstance(details, dict):
+        return details
+    return {k: v for k, v in details.items() if k not in RAW_ENGINE_DETAIL_KEYS}
+
 
 def asset_query():
     return select(DataAsset).options(
@@ -190,8 +219,17 @@ def dashboard(ctx=Depends(current_context), db: Session = Depends(get_db)):
         "open_tasks": len(tasks), "high_priority_tasks": sum(1 for t in tasks if t.priority == "HIGH"),
         "publication_status": statuses,
         "average_governance_readiness": round(sum(calculate_readiness(a)["score"] for a in assets) / len(assets)) if assets else 0,
-        "average_quality_score": round(sum(a.quality_profiles[0].overall_score for a in assets if a.quality_profiles) / max(1, sum(1 for a in assets if a.quality_profiles)), 1),
+        "average_quality_score": _average_quality_score(assets),
     }
+
+
+def _average_quality_score(assets):
+    scores = [
+        profile.overall_score
+        for profile in (latest_quality_profile(a) for a in assets)
+        if profile is not None
+    ]
+    return round(sum(scores) / len(scores), 1) if scores else None
 
 
 @router.get("/systems")
@@ -347,8 +385,9 @@ def upsert_metadata(asset_id: int, payload: MetadataUpsert, ctx=Depends(require_
     for item in db.scalars(select(AssetMetadata).where(AssetMetadata.asset_id == asset.id, AssetMetadata.metadata_key == payload.metadata_key)).all():
         db.delete(item)
     values = payload.metadata_value if payload.metadata_key == "keyword" and isinstance(payload.metadata_value, list) else [payload.metadata_value]
+    now = datetime.now(timezone.utc)
     for value in values:
-        db.add(AssetMetadata(asset_id=asset.id, metadata_key=payload.metadata_key, metadata_value=value, metadata_source=payload.metadata_source, review_status=payload.review_status, created_by=ctx["user"].id, reviewed_by=ctx["user"].id if payload.review_status == "APPROVED" else None, reviewed_at=datetime.now(timezone.utc) if payload.review_status == "APPROVED" else None))
+        db.add(AssetMetadata(asset_id=asset.id, metadata_key=payload.metadata_key, metadata_value=value, metadata_source=payload.metadata_source, review_status="APPROVED", created_by=ctx["user"].id, reviewed_by=ctx["user"].id, reviewed_at=now))
     mark_needs_update_if_published(db, asset, ctx["user"].id, f"Metadata changed: {payload.metadata_key}"); db.commit()
     asset = get_asset_for_org(db, asset_id, ctx["organization_id"]); sync_tasks(db, asset); db.commit(); return serialize_asset(asset)
 
@@ -401,7 +440,7 @@ def _ensure_review_followup_task(db, asset, review, key, domain, title, why, act
     if existing:
         existing.source_reference = str(review.id)
         existing.source_type = "PERIODIC_REVIEW_CHANGE"
-        return existing
+        return existing, False
 
     task = StewardshipTask(
         organization_id=asset.organization_id,
@@ -416,7 +455,7 @@ def _ensure_review_followup_task(db, asset, review, key, domain, title, why, act
         source_reference=str(review.id),
     )
     db.add(task)
-    return task
+    return task, True
 
 
 @router.post("/assets/{asset_id}/reviews")
@@ -494,10 +533,11 @@ def complete_periodic_review(asset_id: int, payload: PeriodicReviewCreate, ctx=D
         )
         if needs_followup and key in followups:
             domain, title, why, action = followups[key]
-            task = _ensure_review_followup_task(
+            _task, created = _ensure_review_followup_task(
                 db, asset, review, key, domain, title, why, action
             )
-            created_followups.append(title)
+            if created:
+                created_followups.append(title)
 
     # Close the scheduled review task itself.
     periodic_task = db.scalar(
@@ -548,7 +588,7 @@ def list_tasks(ctx=Depends(current_context), db: Session = Depends(get_db)):
             StewardshipTask.status != "COMPLETED",
         )
         .order_by(
-            StewardshipTask.priority,
+            TASK_PRIORITY_ORDER,
             StewardshipTask.created_at,
         )
     ).all()
@@ -579,8 +619,28 @@ def list_tasks(ctx=Depends(current_context), db: Session = Depends(get_db)):
 @router.post("/tasks/{task_id}/complete")
 def complete_task(task_id: int, payload: TaskComplete, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
     task = db.get(StewardshipTask, task_id)
-    if not task or task.organization_id != ctx["organization_id"]: raise HTTPException(status_code=404, detail="Task not found")
-    task.status = "COMPLETED"; task.completed_at = datetime.now(timezone.utc); db.commit(); return {"success": True}
+    if not task or task.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Readiness tasks are reconciled from the asset itself, so marking one
+    # complete while the information is still missing was silently undone on the
+    # next request. Say so instead of pretending it worked.
+    if (task.source_type or "").upper() == "READINESS":
+        asset = get_asset_for_org(db, task.asset_id, ctx["organization_id"])
+        outstanding = {c["key"] for c in calculate_readiness(asset)["checks"] if not c["complete"]}
+        if task.task_type in outstanding:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This step completes itself once the information it asks for is "
+                    "recorded. Add the missing information and it will clear automatically."
+                ),
+            )
+
+    task.status = "COMPLETED"
+    task.completed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True}
 
 
 @router.post("/tasks/{task_id}/expert-review")
@@ -647,7 +707,7 @@ def quality(asset_id: int, ctx=Depends(current_context), db: Session = Depends(g
                 changed = True
     if changed:
         db.commit()
-    return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "connection_id": x.connection_id, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "source_mapping": _source_mapping_from_link(x), "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": i.details, "created_at": i.created_at} for i in issues]}
+    return {"engine_mode": settings.testgen_mode, "profiles": [{"overall_score": p.overall_score, "completeness_score": p.completeness_score, "validity_score": p.validity_score, "uniqueness_score": p.uniqueness_score, "consistency_score": p.consistency_score, "timeliness_score": p.timeliness_score, "row_count": p.row_count, "profiled_at": p.profiled_at, "source": p.source, "external_run_id": p.external_run_id} for p in profiles], "rules": result, "links": [{"id": x.id, "resource_id": x.resource_id, "provider": x.provider, "project_code": x.project_code, "connection_id": x.connection_id, "table_group_id": x.table_group_id, "test_suite_id": x.test_suite_id, "external_table_name": x.external_table_name, "source_mapping": _source_mapping_from_link(x), "sync_status": x.sync_status, "last_profiled_at": x.last_profiled_at, "last_tested_at": x.last_tested_at} for x in links], "issues": [{"id": i.id, "resource_id": i.resource_id, "rule_id": i.rule_id, "issue_type": i.issue_type, "title": i.title, "description": i.description, "severity": i.severity, "status": i.status, "failed_count": i.failed_count, "source": i.source, "external_run_id": i.external_run_id, "details": public_issue_details(i.details), "created_at": i.created_at} for i in issues]}
 
 
 @router.post("/assets/{asset_id}/quality/rules")
@@ -671,6 +731,9 @@ def add_quality_result(rule_id: int, payload: QualityResultCreate, ctx=Depends(r
 
 @router.get("/quality/engine/status")
 def quality_engine_status(ctx=Depends(current_context)):
+    # Connection details are operational information. Read-only roles get the
+    # mode and nothing that describes where the engine lives.
+    detailed = ctx["role"] in {"STEWARD", "APPROVER", "ORG_ADMIN", "ENTERPRISE_ADMIN"}
     real = settings.testgen_mode == "real"
     auth_configured = (
         bool(settings.testgen_token)
@@ -684,12 +747,12 @@ def quality_engine_status(ctx=Depends(current_context)):
     return {
         "provider": "TESTGEN",
         "mode": settings.testgen_mode,
-        "auth_mode": settings.testgen_auth_mode if real else None,
+        "auth_mode": settings.testgen_auth_mode if (real and detailed) else None,
         "configured": (not real) or bool(settings.testgen_base_url and auth_configured),
-        "base_url": settings.testgen_base_url if real else None,
-        "project_code": settings.testgen_project_code if real else None,
-        "table_group_id": settings.testgen_table_group_id if real else None,
-        "test_suite_id": settings.testgen_test_suite_id if real else None,
+        "base_url": settings.testgen_base_url if (real and detailed) else None,
+        "project_code": settings.testgen_project_code if (real and detailed) else None,
+        "table_group_id": settings.testgen_table_group_id if (real and detailed) else None,
+        "test_suite_id": settings.testgen_test_suite_id if (real and detailed) else None,
         "message": "Real TestGen REST integration is enabled." if real else "Mock TestGen is ready.",
     }
 
@@ -774,7 +837,7 @@ def run_quality_checks(asset_id: int, payload: QualityRunRequest, ctx=Depends(re
 
 
 @router.post("/quality/issues/{issue_id}/decision")
-def quality_issue_decision(issue_id: int, payload: QualityDecisionCreate, HygieneFindingDecisionCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+def quality_issue_decision(issue_id: int, payload: QualityDecisionCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
     issue = db.get(QualityIssue, issue_id)
     if not issue or issue.organization_id != ctx["organization_id"]:
         raise HTTPException(status_code=404, detail="Quality issue not found")
@@ -815,7 +878,7 @@ def hygiene_finding_decision(
         "success": True,
         "issue_id": issue.id,
         "status": issue.status,
-        "details": issue.details,
+        "details": public_issue_details(issue.details),
     }
 
 

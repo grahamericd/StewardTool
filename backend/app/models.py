@@ -2,10 +2,10 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .db import Base
+from .db import Base, UTCDateTime
 
 
 def utcnow():
@@ -38,8 +38,8 @@ class Organization(Base):
     description: Mapped[str | None] = mapped_column(Text)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class AppUser(Base):
@@ -49,7 +49,7 @@ class AppUser(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class LocalAuthCredential(Base):
@@ -58,8 +58,8 @@ class LocalAuthCredential(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("app_users.id", ondelete="CASCADE"), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    password_changed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     user = relationship("AppUser")
 
 
@@ -71,7 +71,7 @@ class OrganizationMembership(Base):
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(40), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     user = relationship("AppUser")
     organization = relationship("Organization")
 
@@ -88,8 +88,8 @@ class CatalogSystem(Base):
     system_owner: Mapped[str | None] = mapped_column(String(255))
     lifecycle_status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class DataAsset(Base):
@@ -108,8 +108,8 @@ class DataAsset(Base):
     retention_authority: Mapped[str | None] = mapped_column(Text)
     asset_status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
     resources = relationship("AssetResource", cascade="all, delete-orphan")
     metadata_items = relationship("AssetMetadata", cascade="all, delete-orphan")
@@ -133,8 +133,8 @@ class DataResource(Base):
     format: Mapped[str | None] = mapped_column(String(100))
     media_type: Mapped[str | None] = mapped_column(String(150))
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
     system = relationship("CatalogSystem")
 
 
@@ -146,7 +146,7 @@ class AssetResource(Base):
     resource_id: Mapped[int] = mapped_column(ForeignKey("data_resources.id", ondelete="CASCADE"), nullable=False)
     relationship_type: Mapped[str] = mapped_column(String(80), default="REPRESENTATION", nullable=False)
     is_authoritative: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     resource = relationship("DataResource")
 
 
@@ -160,8 +160,8 @@ class AssetMetadata(Base):
     review_status: Mapped[str] = mapped_column(String(40), default="PROPOSED", nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class GovernanceRequirement(Base):
@@ -189,9 +189,9 @@ class StewardshipReview(Base):
     change_summary: Mapped[str | None] = mapped_column(Text)
     snapshot_before: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    next_review_due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    next_review_due: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
 
 class StewardshipTask(Base):
@@ -209,8 +209,8 @@ class StewardshipTask(Base):
     source_type: Mapped[str] = mapped_column(String(80), default="GOVERNANCE", nullable=False)
     source_reference: Mapped[str | None] = mapped_column(String(255))
     assigned_to: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class QualityProfile(Base):
@@ -225,7 +225,7 @@ class QualityProfile(Base):
     consistency_score: Mapped[float | None] = mapped_column(Float)
     timeliness_score: Mapped[float | None] = mapped_column(Float)
     row_count: Mapped[int | None] = mapped_column(Integer)
-    profiled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    profiled_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     source: Mapped[str] = mapped_column(String(80), default="AI_DATA_STEWARD", nullable=False)
     external_run_id: Mapped[str | None] = mapped_column(String(255))
 
@@ -241,7 +241,7 @@ class QualityRule(Base):
     rule_definition: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="PROPOSED", nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class QualityResult(Base):
@@ -253,7 +253,7 @@ class QualityResult(Base):
     failed_count: Mapped[int | None] = mapped_column(Integer)
     score: Mapped[float | None] = mapped_column(Float)
     details: Mapped[dict | None] = mapped_column(JSON)
-    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    evaluated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     source: Mapped[str] = mapped_column(String(80), default="AI_DATA_STEWARD", nullable=False)
     external_run_id: Mapped[str | None] = mapped_column(String(255))
 
@@ -271,12 +271,12 @@ class QualityEngineResource(Base):
     test_suite_id: Mapped[str | None] = mapped_column(String(255))
     external_table_name: Mapped[str | None] = mapped_column(String(255))
     sync_status: Mapped[str] = mapped_column(String(40), default="CONFIGURED", nullable=False)
-    last_profiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_profiled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_tested_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     last_external_run_id: Mapped[str | None] = mapped_column(String(255))
     configuration: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class QualityIssue(Base):
@@ -296,8 +296,8 @@ class QualityIssue(Base):
     external_run_id: Mapped[str | None] = mapped_column(String(255))
     external_issue_id: Mapped[str | None] = mapped_column(String(255))
     details: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class QualityDecision(Base):
@@ -307,7 +307,7 @@ class QualityDecision(Base):
     decision_type: Mapped[str] = mapped_column(String(60), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class AssetPublication(Base):
@@ -316,13 +316,13 @@ class AssetPublication(Base):
     asset_id: Mapped[int] = mapped_column(ForeignKey("data_assets.id", ondelete="CASCADE"), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(40), default=PublicationStatus.DRAFT.value, nullable=False)
     submitted_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_validation_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_validation_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     validation_errors: Mapped[list | None] = mapped_column(JSON)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class AssetRelease(Base):
@@ -334,12 +334,12 @@ class AssetRelease(Base):
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     snapshot_hash: Mapped[str | None] = mapped_column(String(128))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     ckan_dataset_id: Mapped[str | None] = mapped_column(String(255))
     ckan_name: Mapped[str | None] = mapped_column(String(255))
     publication_result: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class PublicationEvent(Base):
@@ -353,4 +353,4 @@ class PublicationEvent(Base):
     performed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
     comments: Mapped[str | None] = mapped_column(Text)
     event_metadata: Mapped[dict | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

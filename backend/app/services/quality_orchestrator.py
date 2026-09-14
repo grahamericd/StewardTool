@@ -47,6 +47,7 @@ def _source_mapping_from_link(link: QualityEngineResource):
 
 def ensure_link(db: Session, *, organization_id: int, resource_id: int, payload=None):
     link = get_link(db, resource_id)
+    created = False
     if not link:
         link = QualityEngineResource(
             organization_id=organization_id,
@@ -54,6 +55,7 @@ def ensure_link(db: Session, *, organization_id: int, resource_id: int, payload=
             provider='TESTGEN',
         )
         db.add(link)
+        created = True
 
     _apply_testgen_defaults(link)
 
@@ -78,9 +80,22 @@ def ensure_link(db: Session, *, organization_id: int, resource_id: int, payload=
 
         link.configuration = cfg or None
 
-    link.sync_status = 'CONFIGURED' if settings.testgen_mode == 'real' else 'MOCK_READY'
+    # Only a new link or an actual mapping change resets the status. Setting it
+    # unconditionally meant that simply opening the quality page overwrote
+    # SYNCED / CONNECTED / ERROR with CONFIGURED on every read.
+    if created or payload is not None:
+        link.sync_status = 'CONFIGURED' if settings.testgen_mode == 'real' else 'MOCK_READY'
     db.flush()
     return link
+
+
+def _task_status_for_issue(issue: QualityIssue) -> str:
+    """Keep the inbox task in the same bucket as the issue it represents.
+
+    An escalated issue belongs in "waiting on others", not at the top of the
+    steward's list.
+    """
+    return "NEEDS_EXPERT_REVIEW" if issue.status == "NEEDS_EXPERT_REVIEW" else "OPEN"
 
 
 def _open_task_for_issue(db: Session, issue: QualityIssue):
@@ -88,9 +103,10 @@ def _open_task_for_issue(db: Session, issue: QualityIssue):
         StewardshipTask.asset_id == issue.asset_id,
         StewardshipTask.source_type == 'QUALITY_ISSUE',
         StewardshipTask.source_reference == str(issue.id),
-        StewardshipTask.status == 'OPEN',
+        StewardshipTask.status != 'COMPLETED',
     ))
     if existing:
+        existing.status = _task_status_for_issue(issue)
         return existing
     task = StewardshipTask(
         organization_id=issue.organization_id,
@@ -101,6 +117,7 @@ def _open_task_for_issue(db: Session, issue: QualityIssue):
         why_it_matters=issue.description or 'A quality finding needs a human stewardship decision.',
         recommended_action='Review the evidence and decide whether this is bad data, a valid exception, an expectation that needs to change, or something that needs expert review.',
         priority='HIGH' if issue.severity == 'HIGH' else 'MEDIUM',
+        status=_task_status_for_issue(issue),
         source_type='QUALITY_ISSUE',
         source_reference=str(issue.id),
     )
@@ -218,10 +235,12 @@ def _complete_issue_tasks(db: Session, issue_id: int):
 
 def _reopen_issue_task(db: Session, issue: QualityIssue):
     task = db.scalar(
-        select(StewardshipTask).where(
+        select(StewardshipTask)
+        .where(
             StewardshipTask.source_type == "QUALITY_ISSUE",
             StewardshipTask.source_reference == str(issue.id),
         )
+        .order_by(StewardshipTask.created_at.desc())
     )
     if task:
         task.title = issue.title
@@ -229,7 +248,7 @@ def _reopen_issue_task(db: Session, issue: QualityIssue):
             "A quality finding needs a human stewardship decision."
         )
         task.priority = "HIGH" if issue.severity == "HIGH" else "MEDIUM"
-        task.status = "OPEN"
+        task.status = _task_status_for_issue(issue)
         task.completed_at = None
         return task
     return _open_task_for_issue(db, issue)
@@ -422,8 +441,18 @@ def _recursive_values(payload, keys):
 
 
 def _first_recursive_value(payload, keys, default=None):
-    values = _recursive_values(payload, set(keys))
-    return values[0] if values else default
+    """Return the first value found, honouring the caller's key priority.
+
+    The keys are searched one at a time. Collecting them in a single pass
+    returned whichever key happened to appear first in the payload, so a
+    TestGen item that lists issue_type before issue_type_name produced the
+    numeric code ("1002") where the readable name was intended.
+    """
+    for key in keys:
+        values = _recursive_values(payload, {key})
+        if values:
+            return values[0]
+    return default
 
 
 def _display_column(raw):
@@ -1109,6 +1138,50 @@ def enrich_hygiene_issue(issue: QualityIssue):
     return issue
 
 
+def _apply_hygiene_status(
+    db: Session,
+    issue: QualityIssue,
+    summary: dict,
+    default_title: str,
+):
+    """Put a profiling issue and its inbox task into the state its findings imply.
+
+    Shared by the decision endpoint and by re-profiling, so that a re-profile
+    that returns the same already-reviewed findings no longer reopens the issue
+    with nothing left to decide.
+    """
+    if summary["total"] and summary["pending"] == 0:
+        if summary["escalated"] > 0:
+            issue.status = "NEEDS_EXPERT_REVIEW"
+            issue.resolved_at = None
+            issue.title = (
+                f"{summary['escalated']} profiling "
+                f"{'finding needs' if summary['escalated'] == 1 else 'findings need'} "
+                "expert review"
+            )
+            _reopen_issue_task(db, issue)
+        else:
+            issue.status = "RESOLVED"
+            issue.resolved_at = now()
+            issue.title = (
+                f"All {summary['total']} profiling "
+                f"{'finding' if summary['total'] == 1 else 'findings'} reviewed"
+            )
+            _complete_issue_tasks(db, issue.id)
+        return issue
+
+    issue.status = "OPEN"
+    issue.resolved_at = None
+    issue.title = (
+        f"Review {summary['pending']} of {summary['total']} "
+        "TestGen profiling findings"
+        if summary["pending"] != summary["total"]
+        else default_title
+    )
+    _reopen_issue_task(db, issue)
+    return issue
+
+
 def decide_hygiene_finding(
     db: Session,
     issue: QualityIssue,
@@ -1154,7 +1227,7 @@ def decide_hygiene_finding(
     db.add(
         QualityDecision(
             issue_id=issue.id,
-            actor_id=actor_id,
+            decided_by=actor_id,
             decision_type=f"HYGIENE_{decision_type}",
             notes=(
                 f"{target.get('title')}: {notes}"
@@ -1164,28 +1237,13 @@ def decide_hygiene_finding(
         )
     )
 
-    if summary["pending"] == 0:
-        if summary["escalated"] > 0:
-            issue.status = "NEEDS_EXPERT_REVIEW"
-            issue.resolved_at = None
-            issue.title = (
-                f"{summary['escalated']} profiling "
-                f"{'finding needs' if summary['escalated'] == 1 else 'findings need'} "
-                "expert review"
-            )
-            _reopen_issue_task(db, issue)
-        else:
-            issue.status = "RESOLVED"
-            issue.resolved_at = now()
-            _complete_issue_tasks(db, issue.id)
-    else:
-        issue.status = "OPEN"
-        issue.resolved_at = None
-        issue.title = (
-            f"Review {summary['pending']} of {summary['total']} "
-            "TestGen profiling findings"
-        )
-        _reopen_issue_task(db, issue)
+    _apply_hygiene_status(
+        db,
+        issue,
+        summary,
+        f"Review {summary['total']} TestGen profiling "
+        f"{'finding' if summary['total'] == 1 else 'findings'}",
+    )
 
     db.commit()
     return issue
@@ -1261,23 +1319,15 @@ def _upsert_hygiene_issue(
     }
 
     if canonical:
-        canonical.title = (
-            f"Review {finding_summary['pending']} of "
-            f"{finding_summary['total']} TestGen profiling findings"
-            if finding_summary["pending"] != finding_summary["total"]
-            else title
-        )
         canonical.description = (
             "TestGen profiling identified data characteristics that may "
             "need stewardship review. AI Data Steward translates each "
             "finding into plain language and lets you resolve them one at a time."
         )
         canonical.severity = "MEDIUM"
-        canonical.status = "OPEN"
-        canonical.resolved_at = None
         canonical.external_run_id = run_id
         canonical.details = details
-        _reopen_issue_task(db, canonical)
+        _apply_hygiene_status(db, canonical, finding_summary, title)
     else:
         canonical = QualityIssue(
             organization_id=asset.organization_id,

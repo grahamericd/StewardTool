@@ -387,3 +387,44 @@ button:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:700px){
   .admin-user-form,.admin-user-card,.temporary-password,.role-guide-grid{grid-template-columns:1fr}
 }
+
+/* --- Classes used by the markup that had no rule -------------------------- */
+/* The JSX and this stylesheet had drifted: the feedback banner, the section
+   eyebrows and every publication-status badge were rendering unstyled. */
+
+.eyebrow{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#667085;
+  margin-bottom:6px;
+}
+
+.message{
+  padding:12px 14px;
+  border-radius:9px;
+  margin-bottom:18px;
+  border:1px solid #b9d8f4;
+  background:#edf6ff;
+  color:#24547f;
+  font-size:13px;
+}
+.message-success{border-color:#a8d5b8;background:#eef9f1;color:#1c6c38}
+.message-error{border-color:#e4a3a3;background:#fff5f5;color:#8c2b2b}
+
+/* Publication state should be readable at a glance rather than seven
+   identical grey pills. Compound selectors keep these clear of the
+   same-named classes used elsewhere. */
+.status.status-draft{background:#eef0f3;color:#59636f}
+.status.status-in_review{background:#fff3d6;color:#7a5900}
+.status.status-approved{background:#e4eefc;color:#1d4e89}
+.status.status-published{background:#e1f4e8;color:#1c6c38}
+.status.status-needs_update{background:#fdeede;color:#8a4a12}
+.status.status-rejected{background:#fdeaea;color:#8c2b2b}
+.status.status-archived{background:#f0eef5;color:#574b6b}
+
+/* While an action is in flight every button is inert, so a second click
+   cannot submit a second publication or approval. */
+.is-busy button:not(.link){opacity:.6;pointer-events:none}
+.is-busy{cursor:progress}

@@ -6,7 +6,9 @@ services:
       POSTGRES_USER: steward
       POSTGRES_PASSWORD: steward
     ports:
-      - "5433:5432"
+      # Loopback only: demo mode trusts the X-User-Email header, and this
+      # database uses a development password.
+      - "127.0.0.1:5433:5432"
     volumes:
       - ads_stage3_pgdata:/var/lib/postgresql/data
 
@@ -34,7 +36,7 @@ services:
       TESTGEN_TABLE_GROUP_ID: ${TESTGEN_TABLE_GROUP_ID:-}
       TESTGEN_TEST_SUITE_ID: ${TESTGEN_TEST_SUITE_ID:-}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

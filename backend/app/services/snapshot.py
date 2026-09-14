@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime, timezone
 
 
 def build_asset_snapshot(asset):
@@ -28,7 +29,12 @@ def build_asset_snapshot(asset):
             "system": r.system.name if r.system else None,
         })
 
-    quality_profiles = sorted(asset.quality_profiles, key=lambda x: x.profiled_at or 0, reverse=True)
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    quality_profiles = sorted(
+        asset.quality_profiles,
+        key=lambda x: x.profiled_at or oldest,
+        reverse=True,
+    )
     latest_profile = None
     if quality_profiles:
         q = quality_profiles[0]

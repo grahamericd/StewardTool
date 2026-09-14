@@ -26,6 +26,20 @@ if [ "$answer" != "RESTORE" ]; then
   exit 1
 fi
 
+echo "Taking a safety backup of the current database first..."
+if ! "$PROJECT_DIR/scripts/backup_postgres.sh"; then
+  echo "FAIL: could not back up the current database. Restore aborted."
+  exit 1
+fi
+
+# If anything below fails the database may be missing or half-restored, so the
+# application must not be left stopped and silent.
+restart_services() {
+  echo "Restarting application services..."
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" start backend frontend edge || true
+}
+trap 'status=$?; if [ "$status" -ne 0 ]; then echo "FAIL: restore did not complete (exit $status). The safety backup above is your rollback."; restart_services; fi' EXIT
+
 echo "Stopping application services..."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" stop backend frontend edge
 

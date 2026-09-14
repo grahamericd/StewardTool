@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     auth_password_min_length: int = 12
     auth_login_max_failures: int = 5
     auth_login_window_minutes: int = 15
+    # Number of trusted reverse proxies in front of the app. 0 means the peer
+    # address is used directly and X-Forwarded-For is ignored. The production
+    # stack is Caddy -> nginx -> app, so it sets 2. Never raise this above the
+    # real number of proxies: each hop lets the client add one more spoofed
+    # entry to the front of the header.
+    auth_trusted_proxy_hops: int = 0
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_url: str | None = None
@@ -65,7 +71,17 @@ class Settings(BaseSettings):
 
     @property
     def trusted_host_list(self) -> list[str]:
-        return [x.strip() for x in self.trusted_hosts.split(",") if x.strip()]
+        hosts = [x.strip() for x in self.trusted_hosts.split(",") if x.strip()]
+        if "*" in hosts:
+            return hosts
+        # Container health checks call http://127.0.0.1:8000/health, so the
+        # loopback names must always be accepted or the backend never reports
+        # healthy once TRUSTED_HOSTS is set to the public domain, and nothing
+        # that depends on it will start.
+        for loopback in ("localhost", "127.0.0.1", "::1"):
+            if loopback not in hosts:
+                hosts.append(loopback)
+        return hosts
 
     @model_validator(mode="after")
     def validate_runtime(self):
@@ -86,6 +102,14 @@ class Settings(BaseSettings):
                 raise ValueError("AUTH_MODE cannot be demo in production")
             if self.auth_mode.lower() == "local" and (not self.auth_secret_key or len(self.auth_secret_key) < 32):
                 raise ValueError("AUTH_SECRET_KEY must be at least 32 characters for local production authentication")
+            if self.auth_mode.lower() == "oidc":
+                if not self.oidc_issuer:
+                    raise ValueError("OIDC_ISSUER is required when AUTH_MODE=oidc")
+                if not self.oidc_audience:
+                    raise ValueError(
+                        "OIDC_AUDIENCE is required when AUTH_MODE=oidc so that tokens issued "
+                        "for other applications are rejected"
+                    )
             if self.auth_secret_key and "CHANGE_ME" in self.auth_secret_key.upper():
                 raise ValueError("AUTH_SECRET_KEY still contains a placeholder value")
             if self.database_url and "CHANGE_ME" in self.database_url.upper():
