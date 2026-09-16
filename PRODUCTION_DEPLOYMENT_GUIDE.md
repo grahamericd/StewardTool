@@ -196,9 +196,28 @@ docker compose --env-file .env.production \
 
 Never paste OAuth secrets into documentation, Git, screenshots, or chat.
 
+After changing any secret in `.env.production`, **recreate** the affected
+service rather than restarting it. `docker compose restart` reuses the
+container's original environment:
+
+```bash
+docker compose --env-file .env.production \
+  -f docker-compose.prod.yml \
+  up -d backend
+```
+
 ## 9. Backups
 
-Create:
+Install the nightly timer (once per host):
+
+```bash
+sudo ./scripts/install_backup_timer.sh
+```
+
+This fills the systemd unit in with this host's user and project directory,
+enables the timer, and prints when it next runs.
+
+Create a backup now:
 
 ```bash
 ./scripts/backup_postgres.sh
@@ -215,6 +234,9 @@ Restore:
 ```bash
 ./scripts/restore_postgres.sh backups/<backup-file>.dump
 ```
+
+The restore takes its own safety backup before dropping anything and restarts
+the application services if it fails partway.
 
 A restore requires typing:
 

@@ -1,4 +1,6 @@
+import secrets
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,10 +19,42 @@ _LOGIN_FAILURES: dict[str, list[datetime]] = {}
 _LOGIN_FAILURES_LOCK = Lock()
 
 
-def _login_key(request: Request, email: str) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
-    return f"{ip}|{email.lower()}"
+@lru_cache(maxsize=1)
+def _dummy_password_hash() -> str:
+    """A hash no password can match, used to keep failed sign-ins constant time."""
+    return hash_password(secrets.token_urlsafe(32))
+
+
+def _client_address(request: Request) -> str:
+    """The caller's address, trusting only as many proxies as are configured.
+
+    Taking the first X-Forwarded-For entry trusted whatever the client sent:
+    Caddy and nginx both append to the header rather than replacing it, so a
+    caller could defeat the throttle entirely by varying that value. Each
+    trusted proxy appends exactly one entry, so with N proxies the address the
+    innermost trusted proxy observed is the Nth from the end.
+    """
+    peer = request.client.host if request.client else "unknown"
+    hops = settings.auth_trusted_proxy_hops
+    if hops <= 0:
+        return peer
+    forwarded = [
+        part.strip()
+        for part in request.headers.get("x-forwarded-for", "").split(",")
+        if part.strip()
+    ]
+    if len(forwarded) >= hops:
+        return forwarded[-hops]
+    return peer
+
+
+def _login_keys(request: Request, email: str) -> list[str]:
+    """Throttle per source address and, independently, per account.
+
+    The account key cannot be influenced by any request header, so rotating
+    addresses no longer gives an attacker unlimited attempts against one user.
+    """
+    return [f"ip:{_client_address(request)}|{email.lower()}", f"account:{email.lower()}"]
 
 
 def _prune_failures(key: str, now: datetime) -> list[datetime]:
@@ -33,29 +67,32 @@ def _prune_failures(key: str, now: datetime) -> list[datetime]:
     return failures
 
 
-def _check_login_throttle(key: str):
+def _check_login_throttle(keys: list[str]):
     now = datetime.now(timezone.utc)
     with _LOGIN_FAILURES_LOCK:
-        failures = _prune_failures(key, now)
-        if len(failures) >= settings.auth_login_max_failures:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many sign-in attempts. Try again later.",
-                headers={"Retry-After": str(settings.auth_login_window_minutes * 60)},
-            )
+        for key in keys:
+            failures = _prune_failures(key, now)
+            if len(failures) >= settings.auth_login_max_failures:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many sign-in attempts. Try again later.",
+                    headers={"Retry-After": str(settings.auth_login_window_minutes * 60)},
+                )
 
 
-def _record_login_failure(key: str):
+def _record_login_failure(keys: list[str]):
     now = datetime.now(timezone.utc)
     with _LOGIN_FAILURES_LOCK:
-        failures = _prune_failures(key, now)
-        failures.append(now)
-        _LOGIN_FAILURES[key] = failures
+        for key in keys:
+            failures = _prune_failures(key, now)
+            failures.append(now)
+            _LOGIN_FAILURES[key] = failures
 
 
-def _clear_login_failures(key: str):
+def _clear_login_failures(keys: list[str]):
     with _LOGIN_FAILURES_LOCK:
-        _LOGIN_FAILURES.pop(key, None)
+        for key in keys:
+            _LOGIN_FAILURES.pop(key, None)
 
 
 @router.get("/config")
@@ -73,17 +110,25 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Local sign-in is not enabled")
 
     email = payload.email.strip().lower()
-    login_key = _login_key(request, email)
-    _check_login_throttle(login_key)
+    login_keys = _login_keys(request, email)
+    _check_login_throttle(login_keys)
     user = db.scalar(select(AppUser).where(AppUser.email == email))
-    # Use the same outward error for unknown accounts and incorrect passwords.
-    if not user or not user.is_active:
-        _record_login_failure(login_key)
-        raise HTTPException(status_code=401, detail="Email or password is incorrect")
+    credential = (
+        db.scalar(select(LocalAuthCredential).where(LocalAuthCredential.user_id == user.id))
+        if user
+        else None
+    )
 
-    credential = db.scalar(select(LocalAuthCredential).where(LocalAuthCredential.user_id == user.id))
-    if not credential or not verify_password(payload.password, credential.password_hash):
-        _record_login_failure(login_key)
+    # Verify against a dummy hash for unknown accounts so that the response
+    # time does not reveal whether the email exists, and use the same outward
+    # error for unknown accounts and incorrect passwords.
+    password_ok = (
+        verify_password(payload.password, credential.password_hash)
+        if credential
+        else verify_password(payload.password, _dummy_password_hash())
+    )
+    if not user or not user.is_active or not credential or not password_ok:
+        _record_login_failure(login_keys)
         raise HTTPException(status_code=401, detail="Email or password is incorrect")
 
     membership = db.scalar(
@@ -95,7 +140,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     if not membership:
         raise HTTPException(status_code=403, detail="This account does not have an active organization membership")
 
-    _clear_login_failures(login_key)
+    _clear_login_failures(login_keys)
     return {
         "access_token": issue_local_token(user),
         "token_type": "bearer",

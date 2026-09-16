@@ -1,0 +1,8 @@
+# Runs when the nightly backup fails. Replace ExecStart with whatever this site
+# uses for alerting (mail, a webhook, a monitoring agent).
+[Unit]
+Description=AI Data Steward backup failure notification
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -p daemon.err "AI Data Steward nightly PostgreSQL backup FAILED. Run scripts/verify_backup.sh and check journalctl -u ai-data-steward-backup."

@@ -30,3 +30,7 @@ backups/
 .fresh_install_org_code
 .fresh_install_admin_email
 .fresh_install_admin_name
+
+# Local databases and test artefacts
+*.db
+.pytest_cache/

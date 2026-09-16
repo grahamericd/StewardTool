@@ -46,6 +46,9 @@ services:
       AUTH_PASSWORD_MIN_LENGTH: ${AUTH_PASSWORD_MIN_LENGTH:-12}
       AUTH_LOGIN_MAX_FAILURES: ${AUTH_LOGIN_MAX_FAILURES:-5}
       AUTH_LOGIN_WINDOW_MINUTES: ${AUTH_LOGIN_WINDOW_MINUTES:-15}
+      # Caddy and nginx each append one X-Forwarded-For entry, so the
+      # sign-in throttle reads the second value from the end.
+      AUTH_TRUSTED_PROXY_HOPS: ${AUTH_TRUSTED_PROXY_HOPS:-2}
 
       CATALOG_PUBLISHER: ${CATALOG_PUBLISHER:-mock}
       CKAN_BASE_URL: ${CKAN_BASE_URL:-}

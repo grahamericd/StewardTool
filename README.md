@@ -134,6 +134,22 @@ After installation:
 6. Switch AI Data Steward to `TESTGEN_MODE=real`.
 7. Map the AI Data Steward resource to the TestGen Table Group / Test Suite IDs.
 
+## What each TestGen mode currently supports
+
+The two modes are not yet feature-equivalent. This matters when reading the
+workflow above, because the suggest/approve/run loop is exercised by the mock.
+
+| Capability | `mock` | `real` |
+| --- | --- | --- |
+| Profiling run and quality score | yes | yes |
+| Hygiene findings and the guided finding workbench | no findings are produced | yes |
+| Suggested expectations | yes | not yet proposed |
+| Approved expectations pushed to TestGen as tests | no | not yet |
+| Test run results stored per rule (`latest_result`) | yes | not yet |
+| Dimension scores (completeness, validity, ...) | synthesized | not populated |
+
+Closing these gaps is tracked in the Stage 4 candidates below.
+
 ## Important architecture boundary
 
 - **AI Data Steward** = catalog, governance, human decisions, tasks, guidance, audit, publication.

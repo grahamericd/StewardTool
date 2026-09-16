@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai_data_steward")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    if settings.seed_demo_data:
+        with SessionLocal() as db:
+            seed(db)
+        logger.warning("Demo seed data is enabled.")
+    if settings.auth_mode.lower() == "demo":
+        logger.warning(
+            "AUTH_MODE=demo: the X-User-Email header is accepted as the caller's "
+            "identity. Never expose this deployment beyond localhost."
+        )
+    logger.info(
+        "AI Data Steward started env=%s version=%s auth_mode=%s",
+        settings.app_env,
+        settings.app_version,
+        settings.auth_mode,
+    )
+    yield
+
+
 app = FastAPI(
     title="AI Data Steward API",
     version=settings.app_version,
@@ -24,6 +46,7 @@ app = FastAPI(
     docs_url="/docs" if settings.enable_api_docs else None,
     redoc_url="/redoc" if settings.enable_api_docs else None,
     openapi_url="/openapi.json" if settings.enable_api_docs else None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -43,23 +66,12 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(router, prefix="/api")
 
 
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-    if settings.seed_demo_data:
-        with SessionLocal() as db:
-            seed(db)
-        logger.warning("Demo seed data is enabled.")
-    logger.info(
-        "AI Data Steward started env=%s version=%s auth_mode=%s",
-        settings.app_env,
-        settings.app_version,
-        settings.auth_mode,
-    )
-
-
 @app.get("/health")
 def health():
+    # Deployment details are useful while developing but are not worth
+    # disclosing to unauthenticated callers on a public host.
+    if settings.app_env.lower() == "production":
+        return {"status": "ok"}
     return {
         "status": "ok",
         "version": settings.app_version,

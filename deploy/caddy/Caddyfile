@@ -1,9 +1,19 @@
 {
     admin off
+    # To give the certificate authority a contact address for expiry notices,
+    # add a line here when you configure the domain, for example:
+    #   email steward-admin@example.gov
+    # It is deliberately not read from an environment variable: an empty or
+    # placeholder value is rejected at certificate issuance time.
 }
 
 {$APP_SITE_ADDRESS:http://localhost} {
     encode zstd gzip
+
+    log {
+        output stdout
+        format json
+    }
 
     header {
         -Server
@@ -11,8 +21,15 @@
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+        Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+        # Sent only over HTTPS, so a plain-HTTP local validation run is unaffected.
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
     }
 
-    reverse_proxy frontend:8080
+    reverse_proxy frontend:8080 {
+        # Match the backend's synchronous TestGen polling window.
+        transport http {
+            read_timeout 620s
+        }
+    }
 }

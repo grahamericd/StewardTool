@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import stat
 import sys
 from pathlib import Path
@@ -92,7 +93,21 @@ try:
 except OSError:
     pass
 
-tracked = os.system(f"git ls-files --error-unmatch {ENV_PATH} >/dev/null 2>&1") == 0
+# subprocess with an argument list: os.system() built a shell command from the
+# path, so any path containing spaces or shell metacharacters was injected.
+git_checked = False
+try:
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", str(ENV_PATH)],
+        cwd=ENV_PATH.resolve().parent,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    git_checked = True
+except (OSError, subprocess.SubprocessError):
+    warnings.append("git is unavailable, so it could not be confirmed that the environment file is untracked")
+    tracked = False
 if tracked:
     fail(f"{ENV_PATH} is tracked by git", failures)
 
@@ -109,6 +124,7 @@ if failures:
 
 print("PASS: required production secrets/settings passed basic validation")
 print("PASS: database password is passed separately and is safe to contain URL-special characters")
-print("PASS: environment file is not tracked by git")
+if git_checked:
+    print("PASS: environment file is not tracked by git")
 if not warnings:
     print("PASS: environment file permissions are appropriately restrictive")

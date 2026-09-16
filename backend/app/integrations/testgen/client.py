@@ -1,5 +1,7 @@
+import re
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -8,6 +10,24 @@ from ...config import settings
 
 class TestGenError(RuntimeError):
     pass
+
+
+_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _segment(value, label: str) -> str:
+    """Validate and encode a value before it becomes part of a TestGen URL path.
+
+    These identifiers come from a steward-supplied mapping. Interpolated raw,
+    a value containing "/../" or "?" re-pointed the request at a different
+    TestGen endpoint while still carrying this server's bearer token.
+    """
+    text = str(value or "").strip()
+    if not _SEGMENT_PATTERN.match(text):
+        raise TestGenError(
+            f"{label} must be 1-128 characters using letters, digits, dot, underscore or hyphen."
+        )
+    return quote(text, safe="")
 
 
 class TestGenClient:
@@ -170,7 +190,7 @@ class TestGenClient:
 
         result = self._request(
             "GET",
-            f"/api/v1/projects/{project_code}/jobs",
+            f"/api/v1/projects/{_segment(project_code, 'TestGen project code')}/jobs",
         )
         return {
             "ok": True,
@@ -181,49 +201,49 @@ class TestGenClient:
     def submit_profile(self, table_group_id: str) -> dict:
         return self._request(
             "POST",
-            f"/api/v1/table-groups/{table_group_id}/profiling-runs",
+            f"/api/v1/table-groups/{_segment(table_group_id, 'TestGen table group id')}/profiling-runs",
         )
 
     def get_profile_run(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/profiling-runs/{job_id}",
+            f"/api/v1/profiling-runs/{_segment(job_id, 'TestGen job id')}",
         )
 
     def get_profile_columns(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/profiling-runs/{job_id}/columns",
+            f"/api/v1/profiling-runs/{_segment(job_id, 'TestGen job id')}/columns",
         )
 
     def get_hygiene_issues(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/profiling-runs/{job_id}/hygiene-issues",
+            f"/api/v1/profiling-runs/{_segment(job_id, 'TestGen job id')}/hygiene-issues",
         )
 
     def get_potential_pii(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/profiling-runs/{job_id}/potential-pii",
+            f"/api/v1/profiling-runs/{_segment(job_id, 'TestGen job id')}/potential-pii",
         )
 
     def submit_test_run(self, test_suite_id: str) -> dict:
         return self._request(
             "POST",
-            f"/api/v1/test-suites/{test_suite_id}/test-runs",
+            f"/api/v1/test-suites/{_segment(test_suite_id, 'TestGen test suite id')}/test-runs",
         )
 
     def get_test_run(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/test-runs/{job_id}",
+            f"/api/v1/test-runs/{_segment(job_id, 'TestGen job id')}",
         )
 
     def get_test_results(self, job_id: str) -> dict:
         return self._request(
             "GET",
-            f"/api/v1/test-runs/{job_id}/results",
+            f"/api/v1/test-runs/{_segment(job_id, 'TestGen job id')}/results",
         )
 
     def _status(self, payload: dict) -> str:

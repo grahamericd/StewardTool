@@ -1,0 +1,5 @@
+# Test and audit tooling. Kept out of requirements.txt so it is not installed
+# into the production image.
+-r requirements.txt
+pytest==9.1.1
+pip-audit==2.9.0
