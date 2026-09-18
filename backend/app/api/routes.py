@@ -341,12 +341,23 @@ def update_understanding(asset_id: int, payload: UnderstandingUpdate, ctx=Depend
 
     asset.business_definition = payload.business_definition.strip()
     asset.business_domain = payload.business_area.strip()
-
+    
+    if isinstance(payload.contact_point, str):
+        contact_value = {
+            "name": payload.contact_point.strip(),
+        }
+    else:
+        contact_value = {
+            "name": payload.contact_point.name.strip(),
+        }
+        if payload.contact_point.email and payload.contact_point.email.strip():
+            contact_value["email"] = payload.contact_point.email.strip()
+            
     metadata_values = {
         "theme": [payload.business_area.strip()],
         "keyword": [value.strip() for value in payload.search_terms if value and value.strip()],
         "update_frequency": [payload.update_frequency.strip()],
-        "contact": [payload.contact_point.strip()],
+        "contact": [contact_value],
     }
 
     for key, values in metadata_values.items():

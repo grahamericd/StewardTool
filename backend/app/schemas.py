@@ -157,12 +157,20 @@ class PeriodicReviewCreate(BaseModel):
 
 
 
+class ContactPointInput(BaseModel):
+    name: ShortText = Field(min_length=1)
+    email: ShortText | None = None
+
+
 class UnderstandingUpdate(BaseModel):
     business_definition: LongText = Field(min_length=1)
     business_area: ShortText = Field(min_length=1)
     search_terms: list[ShortText] = Field(default_factory=list, max_length=50)
     update_frequency: ShortText = Field(min_length=1)
-    contact_point: ShortText = Field(min_length=1)
+
+    # Accept the structured representation used by the catalog while
+    # remaining compatible with older clients that submitted a string.
+    contact_point: ContactPointInput | ShortText
 
 
 class LoginRequest(BaseModel):

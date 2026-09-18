@@ -1165,8 +1165,36 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
   const [searchTerms,setSearchTerms]=useState(
     Array.isArray(existing.keyword) ? existing.keyword.join(", ") : (existing.keyword||"")
   );
-  const [updatePattern,setUpdatePattern]=useState(existing.update_frequency||"");
-  const [contactPoint,setContactPoint]=useState(existing.contact||"");
+  function firstMetadataValue(value){
+    return Array.isArray(value) ? (value[0] ?? "") : value;
+  }
+
+  function normalizeUpdatePattern(value){
+    const raw=firstMetadataValue(value);
+    if(!raw) return "";
+    const normalized=String(raw).trim().toUpperCase().replace(/[\s-]+/g,"_");
+    const exact=["CONTINUOUS","DAILY","WEEKLY","MONTHLY","QUARTERLY","ANNUALLY","EVENT_DRIVEN","UNKNOWN"];
+    if(exact.includes(normalized)) return normalized;
+    if(normalized.includes("CONTINU")) return "CONTINUOUS";
+    if(normalized.includes("DAILY") || normalized.includes("DAY")) return "DAILY";
+    if(normalized.includes("WEEK")) return "WEEKLY";
+    if(normalized.includes("MONTH")) return "MONTHLY";
+    if(normalized.includes("QUART")) return "QUARTERLY";
+    if(normalized.includes("ANNU") || normalized.includes("YEAR")) return "ANNUALLY";
+    if(normalized.includes("EVENT")) return "EVENT_DRIVEN";
+    if(normalized.includes("UNKNOWN") || normalized.includes("UNSURE") || normalized.includes("NOT_SURE")) return "UNKNOWN";
+    return "";
+  }
+
+  const [updatePattern,setUpdatePattern]=useState(normalizeUpdatePattern(existing.update_frequency));
+  const rawContact=firstMetadataValue(existing.contact);
+  const existingContact =
+    rawContact && typeof rawContact === "object"
+      ? rawContact
+      : { name: rawContact || "", email: "" };
+
+  const [contactName,setContactName]=useState(String(existingContact.name || ""));
+  const [contactEmail,setContactEmail]=useState(String(existingContact.email || ""));
   const [businessPurpose,setBusinessPurpose]=useState(a.business_definition||"");
   const [suggestedTerms,setSuggestedTerms]=useState([]);
 
@@ -1207,7 +1235,10 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
       business_area: businessArea.trim(),
       search_terms: searchTerms.split(",").map(x=>x.trim()).filter(Boolean),
       update_frequency: updatePattern,
-      contact_point: contactPoint.trim()
+      contact_point: {
+        name: contactName.trim(),
+        email: contactEmail.trim() || null
+      }
     };
 
     const saved=await doAction(
@@ -1281,16 +1312,33 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
           <option value="UNKNOWN">I’m not sure</option>
         </select>
       </label>
-      <label>If someone has a business question, who should they contact?<input value={contactPoint} onChange={e=>setContactPoint(e.target.value)} placeholder="Person, team, or business office"/></label>
+      <label>
+  If someone has a business question, who should they contact?
+  <input
+    value={contactName}
+    onChange={e=>setContactName(e.target.value)}
+    placeholder="Person, team, or business office"
+  />
+</label>
+
+<label>
+  Email or shared mailbox
+  <input
+    type="email"
+    value={contactEmail}
+    onChange={e=>setContactEmail(e.target.value)}
+    placeholder="data@example.gov"
+  />
+</label>
 
       <div className="understanding-summary">
         <div><span>Business area</span><b>{businessArea}</b></div>
         <div><span>Search terms</span><b>{searchTerms||"Not entered"}</b></div>
         <div><span>How it changes</span><b>{updatePattern||"Not selected"}</b></div>
-        <div><span>Contact</span><b>{contactPoint||"Not entered"}</b></div>
+        <div><span>Contact</span><b>{contactName||"Not entered"}{contactEmail?` · ${contactEmail}`:""}</b></div>
       </div>
 
-      <div className="button-row"><button onClick={()=>setStep(4)}>Back</button><button className="primary" disabled={!updatePattern||!contactPoint.trim()} onClick={save}>Save this description</button></div>
+      <div className="button-row"><button onClick={()=>setStep(4)}>Back</button><button className="primary" disabled={!updatePattern||!contactName.trim()} onClick={save}>Save this description</button></div>
 
       <details className="advanced-details">
         <summary>What information will AI Data Steward record?</summary>
@@ -2009,3 +2057,4 @@ function EmptyState({title="Nothing needs attention right now.",text=null}){
 }
 
 createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
+
