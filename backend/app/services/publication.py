@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import AssetPublication, AssetRelease, DataAsset, Organization, PublicationEvent, PublicationStatus
@@ -46,6 +47,8 @@ def submit_for_review(db: Session, asset: DataAsset, actor_id: int, comments: st
     publication.last_validation_at = now()
     publication.validation_errors = readiness["blocking"]
     if not readiness["ready_to_submit"]:
+        # Keep the record of what was missing; raising first discarded it.
+        db.commit()
         raise HTTPException(status_code=400, detail={"message": "Asset is not ready to submit.", "readiness": readiness})
 
     old = publication.status
@@ -85,7 +88,15 @@ def approve(db: Session, asset: DataAsset, actor_id: int, comments: str | None):
     )
     db.add(release)
     record_event(db, publication, asset.id, "APPROVED", actor_id, old, publication.status, comments, {"version_number": version_number, "snapshot_hash": snapshot_hash})
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two approvals raced for the same version number. Nothing is written.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Another approval completed first. Reload the asset and try again.",
+        )
     return publication
 
 

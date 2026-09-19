@@ -1,7 +1,7 @@
 import base64
 import hashlib
 import hmac
-import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import get_db
 from .models import AppUser, LocalAuthCredential, OrganizationMembership
+
+logger = logging.getLogger("ai_data_steward.auth")
 
 
 def _utcnow():
@@ -96,11 +98,12 @@ def _jwks_client():
         return PyJWKClient(settings.oidc_jwks_url)
     if not settings.oidc_issuer:
         raise RuntimeError("OIDC_ISSUER or OIDC_JWKS_URL must be configured")
-    discovery = httpx.get(
+    response = httpx.get(
         f"{settings.oidc_issuer.rstrip('/')}/.well-known/openid-configuration",
         timeout=10,
-    ).json()
-    return PyJWKClient(discovery["jwks_uri"])
+    )
+    response.raise_for_status()
+    return PyJWKClient(response.json()["jwks_uri"])
 
 
 def _bearer_token(request: Request) -> str:
@@ -137,7 +140,10 @@ def _identity(request: Request, demo_email: str | None) -> tuple[str | None, int
                 options={"verify_aud": bool(settings.oidc_audience)},
             )
         except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"Invalid identity token: {exc}")
+            # The provider's message can name internal hosts and key ids, so it
+            # is logged rather than returned.
+            logger.warning("Rejected OIDC token: %s", exc)
+            raise HTTPException(status_code=401, detail="Invalid or expired session")
         email = claims.get(settings.oidc_email_claim)
         if not email:
             raise HTTPException(status_code=401, detail=f"Token missing {settings.oidc_email_claim} claim")

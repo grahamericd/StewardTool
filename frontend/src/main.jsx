@@ -1,12 +1,46 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { api, clearAccessToken, getAccessToken, publicApi, setAccessToken } from "./api";
+import { api, clearAccessToken, getAccessToken, publicApi, setAccessToken, setDemoMode } from "./api";
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
 const PRIMARY_NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps"];
 const REVIEW_NAV = ["Review Queue", "Publishing History"];
 const ADMIN_NAV = ["User Administration"];
+
+// One definition of where a task is worked on. This lived in three places and
+// two of them sent description and location tasks to the Governance guide,
+// which has no step for them, so the guided task never started.
+const UNDERSTAND_TASK_TYPES = ["business_definition","theme","keywords","update_frequency","contact","review_change_purpose"];
+const LOCATION_TASK_TYPES = ["has_resource","authoritative_source","review_change_locations","review_change_official_source"];
+
+export function routeForTask(task){
+  if(!task) return null;
+  if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
+    return { tab:"Can This Information Be Trusted?", guided:null, qualityIssueId:Number(task.source_reference) };
+  }
+  const route = { tab:"Governance", guided:task, qualityIssueId:null };
+  if(task.source_type==="PERIODIC_REVIEW") route.tab="Review & Maintain";
+  else if(task.governance_domain==="QUALITY") route.tab="Can This Information Be Trusted?";
+  else if(["METADATA","DESCRIPTION"].includes(task.governance_domain) || UNDERSTAND_TASK_TYPES.includes(task.task_type)) route.tab="Help Others Understand It";
+  else if(LOCATION_TASK_TYPES.includes(task.task_type)) route.tab="Where It Lives";
+  return route;
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state={error:null}; }
+  static getDerivedStateFromError(error){ return {error}; }
+  componentDidCatch(error,info){ console.error("AI Data Steward failed to render",error,info); }
+  render(){
+    if(!this.state.error) return this.props.children;
+    return <div className="auth-shell"><div className="auth-card">
+      <div className="brand">AI Data Steward</div>
+      <h1>This page could not be displayed</h1>
+      <p>Nothing you entered has been lost. Reload the page to continue; if it keeps happening, tell your administrator what you were doing.</p>
+      <button onClick={()=>window.location.reload()}>Reload</button>
+    </div></div>;
+  }
+}
 
 function App() {
   const [page, setPage] = useState("Steward Home");
@@ -24,20 +58,27 @@ function App() {
   const [selectedQualityIssueId, setSelectedQualityIssueId] = useState(null);
   const [guidedTask, setGuidedTask] = useState(null);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState("info");
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const userEmail = authConfig?.mode==="demo" ? USERS[userLabel] : null;
   const canReview = ["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
   const canAdministerUsers = ["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
+
+  const fail = useCallback(text=>{ setMessageTone("error"); setMessage(text); },[]);
+  const succeed = useCallback(text=>{ setMessageTone("success"); setMessage(text||""); },[]);
 
   useEffect(()=>{
     publicApi("/auth/config")
       .then(cfg=>{
         setAuthConfig(cfg);
+        setDemoMode(cfg.mode==="demo");
         if(cfg.mode==="demo") setSignedIn(true);
         else setSignedIn(Boolean(getAccessToken()));
       })
-      .catch(e=>setMessage(e.message))
+      .catch(e=>fail(e.message))
       .finally(()=>setAuthReady(true));
-  },[]);
+  },[fail]);
 
   async function refresh() {
     const [meData, dash, assetData, systemData, taskData] = await Promise.all([
@@ -46,29 +87,55 @@ function App() {
     setMe(meData); setDashboard(dash); setAssets(assetData); setSystems(systemData); setTasks(taskData);
     if (!selectedAssetId && assetData.length) setSelectedAssetId(assetData[0].asset.asset_id);
   }
+  // A 401 anywhere means the session ended. Without this the user stayed in the
+  // signed-in shell with stale data and every later action failed.
+  const handleExpiredSession = useCallback(()=>{
+    if(authConfig?.mode==="demo") return false;
+    clearAccessToken();
+    setSignedIn(false);
+    setMe(null);
+    fail("Your session has ended. Please sign in again.");
+    return true;
+  },[authConfig,fail]);
+
   useEffect(() => {
     if(!authReady || !signedIn) return;
     refresh().catch(e=>{
-      setMessage(e.message);
-      if(authConfig?.mode!=="demo" && !getAccessToken()){
-        setSignedIn(false);
-        setMe(null);
-      }
+      if(e.status===401 && handleExpiredSession()) return;
+      fail(e.message);
     });
   }, [userEmail,authReady,signedIn]);
   const selectedAsset = useMemo(() => assets.find(a => a.asset.asset_id === selectedAssetId), [assets, selectedAssetId]);
 
+  // Returns whether the action succeeded, so callers no longer advance a wizard
+  // to its "complete" step after a failed save. The in-flight guard makes a
+  // second click a no-op rather than a second publish.
   async function doAction(fn, successMessage) {
-    try { setMessage(""); await fn(); await refresh(); setMessage(successMessage); }
-    catch (e) { setMessage(e.message); }
+    if (inFlight.current) return false;
+    inFlight.current = true;
+    setBusy(true);
+    try {
+      setMessage("");
+      await fn();
+      await refresh();
+      succeed(successMessage);
+      return true;
+    } catch (e) {
+      if (!(e.status === 401 && handleExpiredSession())) fail(e.message);
+      return false;
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
   }
 
   async function handleLogin(email,password){
     setMessage("");
     const result=await publicApi("/auth/login",{method:"POST",body:JSON.stringify({email,password})});
     setAccessToken(result.access_token);
+    // The sign-in effect performs the initial load; calling refresh() here too
+    // issued every request twice and let the slower response win.
     setSignedIn(true);
-    await refresh();
   }
 
   async function handleLogout(){
@@ -76,6 +143,10 @@ function App() {
     clearAccessToken();
     setSignedIn(false);
     setMe(null); setDashboard(null); setAssets([]); setSystems([]); setTasks([]);
+    // Leaving these set showed the previous user's asset to the next person who
+    // signed in on the same browser.
+    setSelectedAssetId(null); setSelectedQualityIssueId(null); setGuidedTask(null);
+    setAssetTab("Overview");
     setPage("Steward Home");
     setMessage("");
   }
@@ -124,48 +195,30 @@ function App() {
         <p>Open My Next Steps. AI Data Steward will guide you to the work that needs attention.</p>
       </div>
     </aside>
-    <main>
+    <main className={busy?"is-busy":undefined} aria-busy={busy||undefined}>
       <header>
         <div><div className="org">{me?.organization?.name || "Loading..."}</div><div className="role">{me?.role || ""}</div></div>
         {authConfig?.mode==="demo"
           ? <label className="role-switch demo-control"><span>Demo role</span><select value={userLabel} onChange={e=>setUserLabel(e.target.value)}>{Object.keys(USERS).map(u=><option key={u}>{u}</option>)}</select><small>Demo only</small></label>
           : <div className="signed-in-user"><div><b>{me?.user?.display_name||me?.user?.email}</b><small>{me?.user?.email}</small></div><button onClick={handleLogout}>Sign out</button></div>}
       </header>
-      {message && <div className="message">{message}</div>}
+      {message && <div className={`message message-${messageTone}`} role="status" aria-live="polite">{message}</div>}
       {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} onTask={task=>{
+        const route=routeForTask(task);
         setSelectedAssetId(task.asset_id);
-        if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
-          setGuidedTask(null);
-          setAssetTab("Can This Information Be Trusted?");
-          setSelectedQualityIssueId(Number(task.source_reference));
-        } else if(task.source_type==="PERIODIC_REVIEW"){
-          setGuidedTask(task);
-          setAssetTab("Review & Maintain");
-          setSelectedQualityIssueId(null);
-        } else {
-          setGuidedTask(task);
-          setAssetTab(task.governance_domain==="QUALITY"?"Can This Information Be Trusted?":"Governance");
-          setSelectedQualityIssueId(null);
-        }
+        setGuidedTask(route.guided);
+        setAssetTab(route.tab);
+        setSelectedQualityIssueId(route.qualityIssueId);
         setPage("Information Details");
       }} onInventory={()=>setPage("My Information")} onDiscover={()=>setPage("Discover Information")} onAllTasks={()=>setPage("My Next Steps")} />}
       {page === "My Information" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "Discover Information" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "My Next Steps" && <Inbox tasks={tasks} onGuide={task=>{
+        const route=routeForTask(task);
         setSelectedAssetId(task.asset_id);
-        if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
-          setGuidedTask(null);
-          setAssetTab("Can This Information Be Trusted?");
-          setSelectedQualityIssueId(Number(task.source_reference));
-        } else if(task.source_type==="PERIODIC_REVIEW"){
-          setGuidedTask(task);
-          setAssetTab("Review & Maintain");
-          setSelectedQualityIssueId(null);
-        } else {
-          setGuidedTask(task);
-          setAssetTab(task.governance_domain==="QUALITY"?"Can This Information Be Trusted?":"Governance");
-          setSelectedQualityIssueId(null);
-        }
+        setGuidedTask(route.guided);
+        setAssetTab(route.tab);
+        setSelectedQualityIssueId(route.qualityIssueId);
         setPage("Information Details");
       }} />}
       {page === "Information Details" && <Asset360 asset={selectedAsset} assets={assets} systems={systems} tasks={tasks} role={me?.role} userEmail={userEmail} selectedAssetId={selectedAssetId} setSelectedAssetId={id=>{setSelectedAssetId(id);setSelectedQualityIssueId(null);setGuidedTask(null);setAssetTab("Overview")}} doAction={doAction} tab={assetTab} setTab={setAssetTab} selectedQualityIssueId={selectedQualityIssueId} setSelectedQualityIssueId={setSelectedQualityIssueId} guidedTask={guidedTask} setGuidedTask={setGuidedTask} />}
@@ -330,7 +383,7 @@ function Dashboard({dashboard, assets, onOpen}) {
     <h1>My Information</h1>
     <p className="lead">See the business information your organization has identified, what still needs attention, and whether it is ready to use and share.</p>
     <div className="metrics six">
-      <Metric label="Systems we know about" value={dashboard.systems}/><Metric label="Information we know about" value={dashboard.assets}/><Metric label="Needs attention" value={dashboard.open_tasks}/><Metric label="Stewardship completeness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average information quality" value={`${dashboard.average_quality_score}%`}/><Metric label="Document/content locations" value={dashboard.unstructured_resources}/>
+      <Metric label="Systems we know about" value={dashboard.systems}/><Metric label="Information we know about" value={dashboard.assets}/><Metric label="Needs attention" value={dashboard.open_tasks}/><Metric label="Stewardship completeness" value={`${dashboard.average_governance_readiness}%`}/><Metric label="Average information quality" value={dashboard.average_quality_score==null?"Not assessed yet":`${dashboard.average_quality_score}%`}/><Metric label="Document/content locations" value={dashboard.unstructured_resources}/>
     </div>
     <h2>Information</h2>
     <div className="grid">{assets.map(a=><div className="card" key={a.asset.asset_id}>
@@ -691,26 +744,11 @@ function InformationOverview({asset,tasks,setTab,setGuidedTask,setSelectedQualit
   ];
 
   function openTask(task){
-    if(!task) return;
-    if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
-      setGuidedTask(null);
-      setSelectedQualityIssueId(Number(task.source_reference));
-      setTab("Can This Information Be Trusted?");
-      return;
-    }
-    setSelectedQualityIssueId(null);
-    setGuidedTask(task);
-    if(task.source_type==="PERIODIC_REVIEW"){
-      setTab("Review & Maintain");
-    }else if(task.governance_domain==="QUALITY"){
-      setTab("Can This Information Be Trusted?");
-    }else if(["METADATA","DESCRIPTION"].includes(task.governance_domain) || ["business_definition","theme","keywords","update_frequency","contact"].includes(task.task_type)){
-      setTab("Help Others Understand It");
-    }else if(task.task_type==="has_resource" || task.task_type==="authoritative_source" || task.task_type==="review_change_locations" || task.task_type==="review_change_official_source"){
-      setTab("Where It Lives");
-    }else{
-      setTab("Governance");
-    }
+    const route=routeForTask(task);
+    if(!route) return;
+    setGuidedTask(route.guided);
+    setSelectedQualityIssueId(route.qualityIssueId);
+    setTab(route.tab);
   }
 
   return <>
@@ -813,7 +851,7 @@ function WhereItLives({asset,userEmail,doAction}) {
   async function confirmOfficial(){
     const s=selected();
     if(!s) return;
-    await doAction(
+    const saved=await doAction(
       ()=>api(`/assets/${a.asset_id}/official-source`,userEmail,{
         method:"POST",
         body:JSON.stringify({
@@ -823,6 +861,7 @@ function WhereItLives({asset,userEmail,doAction}) {
       }),
       `${s.name} is now recorded as the official source.`
     );
+    if(!saved) return;
     setMode("LIST");
     setStep(1);
   }
@@ -1126,8 +1165,36 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
   const [searchTerms,setSearchTerms]=useState(
     Array.isArray(existing.keyword) ? existing.keyword.join(", ") : (existing.keyword||"")
   );
-  const [updatePattern,setUpdatePattern]=useState(existing.update_frequency||"");
-  const [contactPoint,setContactPoint]=useState(existing.contact||"");
+  function firstMetadataValue(value){
+    return Array.isArray(value) ? (value[0] ?? "") : value;
+  }
+
+  function normalizeUpdatePattern(value){
+    const raw=firstMetadataValue(value);
+    if(!raw) return "";
+    const normalized=String(raw).trim().toUpperCase().replace(/[\s-]+/g,"_");
+    const exact=["CONTINUOUS","DAILY","WEEKLY","MONTHLY","QUARTERLY","ANNUALLY","EVENT_DRIVEN","UNKNOWN"];
+    if(exact.includes(normalized)) return normalized;
+    if(normalized.includes("CONTINU")) return "CONTINUOUS";
+    if(normalized.includes("DAILY") || normalized.includes("DAY")) return "DAILY";
+    if(normalized.includes("WEEK")) return "WEEKLY";
+    if(normalized.includes("MONTH")) return "MONTHLY";
+    if(normalized.includes("QUART")) return "QUARTERLY";
+    if(normalized.includes("ANNU") || normalized.includes("YEAR")) return "ANNUALLY";
+    if(normalized.includes("EVENT")) return "EVENT_DRIVEN";
+    if(normalized.includes("UNKNOWN") || normalized.includes("UNSURE") || normalized.includes("NOT_SURE")) return "UNKNOWN";
+    return "";
+  }
+
+  const [updatePattern,setUpdatePattern]=useState(normalizeUpdatePattern(existing.update_frequency));
+  const rawContact=firstMetadataValue(existing.contact);
+  const existingContact =
+    rawContact && typeof rawContact === "object"
+      ? rawContact
+      : { name: rawContact || "", email: "" };
+
+  const [contactName,setContactName]=useState(String(existingContact.name || ""));
+  const [contactEmail,setContactEmail]=useState(String(existingContact.email || ""));
   const [businessPurpose,setBusinessPurpose]=useState(a.business_definition||"");
   const [suggestedTerms,setSuggestedTerms]=useState([]);
 
@@ -1168,17 +1235,20 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
       business_area: businessArea.trim(),
       search_terms: searchTerms.split(",").map(x=>x.trim()).filter(Boolean),
       update_frequency: updatePattern,
-      contact_point: contactPoint.trim()
+      contact_point: {
+        name: contactName.trim(),
+        email: contactEmail.trim() || null
+      }
     };
 
-    await doAction(
+    const saved=await doAction(
       ()=>api(`/assets/${a.asset_id}/understanding`,userEmail,{
         method:"PATCH",
         body:JSON.stringify(payload)
       }),
       "Information description saved."
     );
-    setStep(6);
+    if(saved) setStep(6);
   }
 
   return <section className="panel understanding-guide">
@@ -1242,16 +1312,33 @@ function UnderstandingGuide({asset,userEmail,doAction}) {
           <option value="UNKNOWN">I’m not sure</option>
         </select>
       </label>
-      <label>If someone has a business question, who should they contact?<input value={contactPoint} onChange={e=>setContactPoint(e.target.value)} placeholder="Person, team, or business office"/></label>
+      <label>
+  If someone has a business question, who should they contact?
+  <input
+    value={contactName}
+    onChange={e=>setContactName(e.target.value)}
+    placeholder="Person, team, or business office"
+  />
+</label>
+
+<label>
+  Email or shared mailbox
+  <input
+    type="email"
+    value={contactEmail}
+    onChange={e=>setContactEmail(e.target.value)}
+    placeholder="data@example.gov"
+  />
+</label>
 
       <div className="understanding-summary">
         <div><span>Business area</span><b>{businessArea}</b></div>
         <div><span>Search terms</span><b>{searchTerms||"Not entered"}</b></div>
         <div><span>How it changes</span><b>{updatePattern||"Not selected"}</b></div>
-        <div><span>Contact</span><b>{contactPoint||"Not entered"}</b></div>
+        <div><span>Contact</span><b>{contactName||"Not entered"}{contactEmail?` · ${contactEmail}`:""}</b></div>
       </div>
 
-      <div className="button-row"><button onClick={()=>setStep(4)}>Back</button><button className="primary" disabled={!updatePattern||!contactPoint.trim()} onClick={save}>Save this description</button></div>
+      <div className="button-row"><button onClick={()=>setStep(4)}>Back</button><button className="primary" disabled={!updatePattern||!contactName.trim()} onClick={save}>Save this description</button></div>
 
       <details className="advanced-details">
         <summary>What information will AI Data Steward record?</summary>
@@ -1305,10 +1392,11 @@ function GovernanceGuide({asset,gov,setGov,userEmail,doAction,guidedTask,setGuid
   }
 
   async function saveGovernance(patch,message){
-    await doAction(
+    const saved=await doAction(
       ()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(patch)}),
       message
     );
+    if(!saved) return;
     setGov({...gov,...patch});
     setGuidedTask(null);
     setMode("");
@@ -1317,10 +1405,11 @@ function GovernanceGuide({asset,gov,setGov,userEmail,doAction,guidedTask,setGuid
 
   async function askExpert(label){
     if(!guidedTask?.id) return;
-    await doAction(
+    const saved=await doAction(
       ()=>api(`/tasks/${guidedTask.id}/expert-review`,userEmail,{method:"POST"}),
       `${label} has been moved to Waiting on Others for expert review.`
     );
+    if(!saved) return;
     setGuidedTask(null);
     setMode("");
     setStep(1);
@@ -1497,7 +1586,7 @@ function QualityPanel({quality,asset,userEmail,doAction,selectedQualityIssueId,s
     }
   },[selectedQualityIssueId,quality?.issues]);
 
-  async function refreshAction(fn,msg){ await doAction(fn,msg); }
+  async function refreshAction(fn,msg){ return doAction(fn,msg); }
 
   return <>
     <section className="panel quality-trust-first">
@@ -1967,4 +2056,5 @@ function EmptyState({title="Nothing needs attention right now.",text=null}){
   return <div className="empty empty-state"><b>{title}</b>{text&&<span>{text}</span>}</div>;
 }
 
-createRoot(document.getElementById("root")).render(<App/>);
+createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
+

@@ -9,7 +9,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 BACKUP_FILE="${1:-}"
 
 if [ -z "$BACKUP_FILE" ]; then
-  BACKUP_FILE="$(ls -1t backups/ai_data_steward_*.dump 2>/dev/null | head -n 1 || true)"
+  BACKUP_DIR="${BACKUP_DIR:-backups}"
+  BACKUP_FILE="$(ls -1t "$BACKUP_DIR"/ai_data_steward_*.dump 2>/dev/null | head -n 1 || true)"
 fi
 
 if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
@@ -23,4 +24,12 @@ test -s "$BACKUP_FILE"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T db \
   pg_restore --list < "$BACKUP_FILE" >/dev/null
 
-echo "PASS: backup is non-empty and pg_restore can read its catalog"
+# A backup that verifies but is a month old is not a backup anyone can rely on.
+MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-36}"
+if find "$BACKUP_FILE" -mmin "+$((MAX_AGE_HOURS * 60))" 2>/dev/null | grep -q .; then
+  echo "FAIL: newest backup is older than ${MAX_AGE_HOURS}h. Is the nightly timer enabled?"
+  echo "      scripts/install_backup_timer.sh installs it."
+  exit 1
+fi
+
+echo "PASS: backup is recent, non-empty, and pg_restore can read its catalog"

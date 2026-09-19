@@ -1,6 +1,7 @@
+import json
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-import re
 
 import httpx
 
@@ -49,23 +50,37 @@ class CKANPublisher(CatalogPublisher):
             raise RuntimeError(f"CKAN action {name} failed: {body}")
         return body["result"]
 
+    @staticmethod
+    def _tag_name(value) -> str | None:
+        """CKAN only accepts alphanumerics, spaces, hyphens, underscores and dots."""
+        cleaned = re.sub(r"[^\w \-.]+", " ", str(value)).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned[:100] if len(cleaned) >= 2 else None
+
     def publish(self, *, release_id: int, snapshot: dict, dcat_payload: dict, existing_ckan_name: str | None = None) -> dict:
         asset = snapshot["asset"]
         metadata = snapshot.get("metadata", {})
         resources = snapshot.get("resources", [])
         name = existing_ckan_name or slugify(asset["name"] + "-" + asset["asset_identifier"][:8])
 
+        keywords = metadata.get("keyword") if isinstance(metadata.get("keyword"), list) else [metadata.get("keyword")]
+        tags = []
+        for keyword in keywords:
+            tag = self._tag_name(keyword) if keyword else None
+            if tag and {"name": tag} not in tags:
+                tags.append({"name": tag})
+
         pkg = {
             "name": name,
             "title": asset["name"],
             "notes": asset.get("business_definition") or "",
             "owner_org": settings.ckan_owner_org,
-            "tags": [{"name": str(x)} for x in (metadata.get("keyword") if isinstance(metadata.get("keyword"), list) else [metadata.get("keyword")]) if x],
+            "tags": tags,
             "extras": [
                 {"key": "ai_data_steward_asset_id", "value": asset["asset_identifier"]},
                 {"key": "business_domain", "value": str(asset.get("business_domain") or "")},
                 {"key": "classification", "value": str(asset.get("classification") or "")},
-                {"key": "governance_dcat_jsonld", "value": __import__("json").dumps(dcat_payload)},
+                {"key": "governance_dcat_jsonld", "value": json.dumps(dcat_payload)},
             ],
         }
         if not pkg["owner_org"]:
@@ -75,6 +90,12 @@ class CKANPublisher(CatalogPublisher):
         if existing_ckan_name:
             pkg["id"] = existing_ckan_name
         result = self._action(action, pkg)
+
+        # Republishing used to call resource_create again for every resource,
+        # so each release added another copy of every distribution. Reconcile
+        # against what the package already holds instead.
+        for existing in self._action("package_show", {"id": result["id"]}).get("resources", []):
+            self._action("resource_delete", {"id": existing["id"]})
 
         for resource in resources:
             if not resource.get("location_reference"):

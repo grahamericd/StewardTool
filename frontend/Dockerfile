@@ -1,7 +1,9 @@
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# Copy the lockfile and use `npm ci` so the image is reproducible. Building from
+# package.json alone re-resolved every caret range on each build.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
 ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}

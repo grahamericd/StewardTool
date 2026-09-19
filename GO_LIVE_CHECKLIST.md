@@ -4,6 +4,8 @@ Use this as the final operator checklist.
 
 ## Technical
 
+- [ ] continuous integration is green on the deployed commit
+- [ ] `cd backend && python -m pytest -q` passes
 - [ ] `./scripts/check_production_hardening.py .env.production` passes
 - [ ] `docker compose ... config` passes
 - [ ] all four containers are healthy
@@ -53,7 +55,8 @@ Use this as the final operator checklist.
 - [ ] restore procedure has been reviewed
 - [ ] log rotation is enabled
 - [ ] `ops_status.sh` passes
-- [ ] daily backup schedule is enabled or explicitly deferred
+- [ ] daily backup schedule is enabled (`sudo ./scripts/install_backup_timer.sh`) or explicitly deferred
+- [ ] `systemctl list-timers ai-data-steward-backup.timer` shows a next run
 - [ ] operator knows where logs and backups are stored
 
 ## Final command

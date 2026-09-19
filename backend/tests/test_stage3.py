@@ -1,13 +1,3 @@
-import os
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-os.environ["DATABASE_URL"] = "sqlite:///./test_stage3.db"
-os.environ["AUTH_MODE"] = "demo"
-os.environ["CATALOG_PUBLISHER"] = "mock"
-os.environ["TESTGEN_MODE"] = "mock"
-
 from fastapi.testclient import TestClient
 from app.main import app
 

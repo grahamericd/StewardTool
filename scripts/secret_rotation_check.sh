@@ -42,7 +42,9 @@ echo "    Updating it invalidates existing login tokens."
 echo
 echo "  POSTGRES_PASSWORD:"
 echo "    Change PostgreSQL first with \\password steward, then update .env.production."
-echo "    Restart backend after updating."
+echo "    Then RECREATE the backend so it re-reads the env file:"
+echo "      docker compose --env-file .env.production -f docker-compose.prod.yml up -d backend"
+echo "    'docker compose restart' keeps the old environment and will crash-loop."
 echo
 echo "  TestGen OAuth:"
 echo "    Rotate at the TestGen/OAuth provider, then update .env.production."
