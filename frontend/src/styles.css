@@ -45,6 +45,11 @@
 .guide-panel { border-top:5px solid #1769aa; }
 .decision-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
 .decision-grid button { text-align:left; min-height:52px; }
+.quality-action-help{margin-top:-4px}
+.decision-outcome-guide{background:#f8fafc}
+.decision-outcome-list{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
+.decision-outcome-list>div{display:flex;flex-direction:column;gap:4px;padding:11px 13px;border:1px solid #dfe5ec;border-radius:9px;background:#fff}
+.decision-outcome-list span{font-size:13px;color:#667085;line-height:1.4}
 
 .evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
 .evidence-grid .metric{padding:10px 12px}
@@ -122,6 +127,12 @@
 .guided-task-grid>div{padding:12px;border:1px solid #e2e8f0;border-radius:9px;background:#f8fafc}
 .guided-task-grid p{margin:5px 0 0}
 .success-panel{border-left:4px solid #2e7d32}
+.onboarding-start{border-left:4px solid #2077b4;background:#f6fbff}
+.ground-zero-panel{border-left:4px solid #2077b4;background:linear-gradient(90deg,#f5fbff 0,#fff 55%)}
+.ground-zero-options{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0}
+.ground-zero-options>div{display:flex;flex-direction:column;gap:6px;padding:14px;border:1px solid #dfe5ec;border-radius:10px;background:#f8fafc}
+.ground-zero-options b{font-size:13px}
+.ground-zero-options span{font-size:13px;color:#667085;line-height:1.4}
 .steward-columns{margin-top:16px}
 .home-task{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #edf0f3}
 .home-task:last-child{border-bottom:0}
@@ -163,8 +174,14 @@
 .publication-readiness strong{font-size:26px}
 .publication-readiness.ready{background:#f1faf3;border:1px solid #cce7d0}
 .publication-readiness.not-ready{background:#fff9ec;border:1px solid #eedca6}
+.publication-state-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+.publication-state-summary>div{display:flex;flex-direction:column;gap:4px;padding:11px 13px;border:1px solid #dfe5ec;border-radius:9px;background:#f8fafc}
+.publication-state-summary span{font-size:11px;text-transform:uppercase;font-weight:700;color:#667085}
+.publication-state-summary b{font-size:14px}
 button:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:800px){.guide-launch-grid{grid-template-columns:1fr}.wizard-head{flex-direction:column}}
+@media(max-width:700px){.publication-state-summary{grid-template-columns:1fr}}
+@media(max-width:700px){.decision-outcome-list{grid-template-columns:1fr}}
 
 .referral-card{display:grid;gap:10px;border:1px solid #cfe0ef;background:#f6fbff;border-radius:10px;padding:14px;margin:14px 0}
 .referral-card>div{display:flex;flex-direction:column;gap:3px}
@@ -326,6 +343,9 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .published-state .completion-mark{flex:0 0 auto}
 .publication-explainer{margin-top:14px}
 .review-state-note{font-size:12px;font-weight:700;color:#667085;padding:7px 0}
+.field-required{font-weight:400;color:#8b2e2e}
+.decision-confirmation{margin-top:14px;padding:14px;border:1px solid #cfe0ef;border-radius:10px;background:#f6fbff}
+.decision-confirmation p{margin:6px 0 12px;color:#667085}
 @media(max-width:850px){
   .publication-role-path{grid-template-columns:1fr 1fr}
   .role-action-card{flex-direction:column;align-items:flex-start}
@@ -428,3 +448,16 @@ button:disabled{opacity:.45;cursor:not-allowed}
    cannot submit a second publication or approval. */
 .is-busy button:not(.link){opacity:.6;pointer-events:none}
 .is-busy{cursor:progress}
+
+.mobile-nav-toggle{display:none}
+@media(max-width:700px){
+  .app{display:block}
+  aside{position:fixed;inset:0 auto 0 0;width:260px;z-index:20;transform:translateX(-105%);transition:transform .2s ease;overflow-y:auto}
+  .app.nav-open aside{transform:translateX(0)}
+  main{padding:0 16px 36px}
+  header{height:70px;margin-bottom:20px;gap:12px}
+  .mobile-nav-toggle{display:block;flex:0 0 auto;padding:8px 10px}
+  header>div:first-of-type{min-width:0}
+  .tabs{scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+}

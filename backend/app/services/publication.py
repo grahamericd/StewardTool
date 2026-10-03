@@ -104,9 +104,12 @@ def reject(db: Session, asset: DataAsset, actor_id: int, comments: str):
     publication = get_or_create_publication(db, asset)
     if publication.status != "IN_REVIEW":
         raise HTTPException(status_code=400, detail="Asset is not currently in review.")
+    normalized = (comments or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="A review note is required when returning information for changes.")
     old = publication.status
     publication.status = "REJECTED"
-    record_event(db, publication, asset.id, "RETURNED_FOR_CHANGES", actor_id, old, publication.status, comments)
+    record_event(db, publication, asset.id, "RETURNED_FOR_CHANGES", actor_id, old, publication.status, normalized)
     db.commit()
     return publication
 

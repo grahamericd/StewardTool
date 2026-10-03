@@ -1,177 +1,304 @@
-# AI Data Steward — Stage 3
+# AI Data Steward
 
-Stage 3 keeps everything validated in Stages 1–2 and makes **data quality actionable** by integrating DataKitchen TestGen as the quality engine beneath the AI Data Steward experience.
+AI Data Steward is a guided, human-in-the-loop data-governance platform for
+people who understand their organization's information but may not know formal
+governance terminology. It helps stewards identify information assets, explain
+what they mean, record where they live, make governance decisions, interpret
+quality evidence, complete stewardship work, and publish approved information.
 
-## What Stage 3 proves
+The product is intentionally not a generic metadata spreadsheet, centralized
+data-ingestion platform, TestGen replacement, or unattended AI decision-maker.
+Technical standards such as DCAT and DQV are produced from business-friendly
+answers rather than required from ordinary users.
+
+## Current workflow
 
 ```text
-Organization → System → Data Asset → Resource
-                        ↓
-                Metadata & Governance
-                        ↓
-             DataKitchen TestGen adapter
-                  ↓             ↓
-              Profiling       Test Runs
-                  ↓             ↓
-             Quality Health   Failures
-                        ↓
-                  Quality Issue
-                        ↓
-                 Stewardship Task
-                        ↓
-                     Guide Me
-                        ↓
-        Bad data / Valid exception /
-        Expectation change / Expert review
-                        ↓
-                 Resolve & audit
-                        ↓
-               Approve → DCAT → CKAN
+Organization
+    -> Systems and familiar tools
+    -> Information assets
+    -> Resources and locations
+    -> Business meaning and structured metadata
+    -> Ownership, classification, retention, and official source
+    -> Quality evidence and human decisions
+    -> Stewardship tasks and periodic review
+    -> Submit -> review -> approve
+    -> Immutable release snapshot
+    -> DCAT mapping -> CKAN or enterprise catalog
 ```
 
-The steward never needs to use TestGen terminology. The UI says **Assess Data Quality**, **Suggested quality expectations**, **Quality issues**, and **Guide Me**.
+The main frontend areas are:
 
-## TestGen integration modes
+- **Steward Home**: current priorities, stewardship progress, and guided work.
+- **My Information**: the organization's known systems, assets, resources,
+    readiness, quality, tasks, and publication status.
+- **Discover Information**: a guided System -> Information -> Resource flow.
+- **Information Details**: Asset 360 for understanding, locations, governance,
+    quality, review, and publication.
+- **My Next Steps**: actionable tasks explaining what is missing, why it
+    matters, and what completion means.
+- **Review Queue** and **Publishing History**: approval and release workflows
+    for reviewers and administrators.
+- **User Administration**: organization user and role management for admins.
 
-Stage 3 intentionally ships with two modes.
+## Roles and authorization
 
-### `TESTGEN_MODE=mock` — default
+The backend enforces organization and role boundaries. Frontend navigation is
+only a convenience and is not the security boundary.
 
-A deterministic TestGen-shaped adapter exercises the entire workflow without requiring TestGen to be installed first. Use this to validate Stage 3 immediately.
+| Role | Typical responsibility |
+| --- | --- |
+| `STEWARD` | Discover information, maintain business metadata, review quality, and complete stewardship tasks. |
+| `APPROVER` | Review submissions and approve or reject releases. |
+| `ORG_ADMIN` | Manage organization users and roles, and perform steward or reviewer work. |
+| `VIEWER` | Read permitted organization information. |
+| `ENTERPRISE_ADMIN` | Enterprise-level administrative and governance access. |
 
-It demonstrates:
-- profile run
-- TestGen-origin quality score
-- suggested expectations
-- rule approval/rejection
-- test execution
-- failed checks
-- automatic quality issues
-- automatic Stewardship Inbox tasks
-- guided human decision and task resolution
+Demo mode includes seeded identities such as `steward@demo.gov`,
+`approver@demo.gov`, `admin@demo.gov`, and `enterprise@demo.gov`. Demo mode
+trusts the `X-User-Email` header and must never be used for public production.
 
-### `TESTGEN_MODE=real`
+Production authentication supports local credentials with bearer-token sessions
+or OIDC. Local authentication includes password hashing, temporary passwords,
+forced first-login password changes, expiration, login throttling, and account
+provisioning through organization membership.
 
-The backend uses TestGen's documented REST run workflow:
+## Data quality boundary
 
-- `POST /api/v1/table-groups/{table_group_id}/profiling-runs`
-- `GET /api/v1/jobs/{job_id}`
-- `GET /api/v1/profiling-runs/{job_id}`
-- `POST /api/v1/test-suites/{test_suite_id}/test-runs`
-- `GET /api/v1/test-runs/{job_id}`
+The integration deliberately separates technical execution from governance:
 
-Set:
+- **TestGen** performs profiling, technical tests, observations, and quality
+    scoring.
+- **AI Data Steward** stores the integration mapping, interprets evidence,
+    creates stewardship tasks, and records human decisions.
+- **DCAT/CKAN** provide standards-based catalog representation and publication.
+
+AI Data Steward does not silently classify a finding as bad data. A steward can
+record that data is incorrect, an exception is valid, an expectation should
+change, or expert review is required.
+
+## TestGen modes
+
+`TESTGEN_MODE=mock` is the default for development and automated testing. The
+deterministic adapter exercises profiling, quality scores, suggested rules,
+rule decisions, test runs, quality issues, inbox tasks, and guided issue
+resolution without requiring a TestGen installation.
+
+`TESTGEN_MODE=real` uses the configured TestGen REST API. Configure the
+connection, authentication, project, table group, and test suite, then map a
+resource from Information Details -> Quality. Install TestGen separately so it
+remains a replaceable technical engine.
+
+The modes are intentionally not feature-equivalent:
+
+| Capability | `mock` | `real` |
+| --- | --- | --- |
+| Profiling run and quality score | Supported | Supported |
+| Hygiene findings and guided finding workbench | No findings produced | Supported when returned by TestGen |
+| Suggested expectations | Supported | Not yet proposed automatically |
+| Approved expectations pushed into TestGen | Not applicable | Not yet implemented |
+| Per-rule test results | Supported | Not yet fully populated |
+| Dimension scores such as completeness and validity | Synthesized | Not yet populated consistently |
+
+Useful TestGen settings are:
 
 ```env
 TESTGEN_MODE=real
 TESTGEN_BASE_URL=http://host.docker.internal:8530
-TESTGEN_TOKEN=<bearer token if your TestGen instance requires one>
+TESTGEN_AUTH_MODE=oauth_refresh
+TESTGEN_OAUTH_CLIENT_ID=
+TESTGEN_OAUTH_CLIENT_SECRET=
+TESTGEN_OAUTH_REFRESH_TOKEN=
+TESTGEN_PROJECT_CODE=
+TESTGEN_TABLE_GROUP_ID=
+TESTGEN_TEST_SUITE_ID=
 ```
 
-Then open Data Asset 360 → Data Quality → **TestGen connection mapping** and enter the Table Group ID and Test Suite ID for the resource.
+Bearer authentication can be selected with `TESTGEN_AUTH_MODE=bearer` and
+`TESTGEN_TOKEN`. Never commit TestGen credentials or tokens.
 
-## First test — no TestGen install required
+## Catalog publication
 
-Stage 3 uses host port **5433** for its PostgreSQL container because many development machines already run PostgreSQL on 5432.
+Publication is based on an approved release, not the current mutable working
+record:
 
-From the project root:
+1. Readiness checks validate the asset.
+2. A steward submits it for review.
+3. An approver reviews and approves or rejects it.
+4. Approval creates an immutable JSON snapshot and SHA-256 hash.
+5. The snapshot is mapped to DCAT/DQV JSON-LD.
+6. The configured publisher publishes to mock CKAN or real CKAN.
+
+Editing a published asset changes its status to `NEEDS_UPDATE`, preserving the
+previous release history. Configure real CKAN publishing with:
+
+```env
+CATALOG_PUBLISHER=ckan
+CKAN_BASE_URL=https://catalog.example.gov
+CKAN_API_KEY=<secret>
+CKAN_OWNER_ORG=<optional-owner-organization>
+```
+
+Automated tests use the mock publisher and must not make uncontrolled live CKAN
+calls.
+
+## Development
+
+The development compose file keeps the development database separate from
+production:
+
+- PostgreSQL: `127.0.0.1:5434`
+- Backend: `127.0.0.1:8001`
+- Frontend dev server: `http://localhost:5173`
+- Docker project: `steward-dev`
+- Authentication: `AUTH_MODE=demo`
+- Database volume: `ads_stage3_pgdata`, separate from the production volume.
+
+When Vite runs directly, the frontend continues to call `/api`. The
+development-only proxy in `frontend/vite.config.js` forwards `/api/*` to
+`http://127.0.0.1:8001/api/*`, so the same frontend API path works in both DEV
+and production. Do not set `VITE_API_BASE` for the normal DEV workflow.
+
+Start the development stack:
 
 ```bash
-docker compose down
-docker compose up --build
+docker compose -p steward-dev -f docker-compose.dev.yml up --build -d
 ```
 
-In another terminal:
+Then run the Vite frontend separately:
 
 ```bash
 cd frontend
 npm install
-npm run dev -- --host 0.0.0.0
+npm run dev
 ```
 
-Open:
+Open `http://localhost:5173`. Development defaults to demo authentication,
+seeded data, mock CKAN, and mock TestGen. Do not point development or tests at
+seeded data, mock CKAN, and mock TestGen. Verify
+`http://localhost:5173/api/auth/config` returns JSON from the DEV backend, not
+the Vite application HTML. Do not point development or tests at the production
+database volume or expose the DEV backend/database beyond localhost.
+
+Stop the isolated DEV stack with:
+
+```bash
+docker compose -p steward-dev -f docker-compose.dev.yml down
+```
+
+Run the regression checks:
+
+```bash
+cd backend
+pytest
+
+cd ../frontend
+npm run build
+```
+
+The backend test suite covers quality workflows, task guidance, publication,
+periodic review, authentication, user administration, hardening, and
+backward-compatible metadata behavior.
+
+## Configuration
+
+The main settings are defined in `backend/app/config.py`. Copy the appropriate
+example environment file rather than committing secrets.
+
+Common settings include:
+
+| Area | Settings |
+| --- | --- |
+| Runtime | `APP_ENV`, `PUBLIC_APP_URL`, `CORS_ORIGINS`, `TRUSTED_HOSTS`, `ENABLE_API_DOCS`, `SEED_DEMO_DATA` |
+| Database | `DATABASE_URL` or `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` |
+| Authentication | `AUTH_MODE`, `AUTH_SECRET_KEY`, password and login-throttling settings, OIDC settings |
+| Catalog | `CATALOG_PUBLISHER`, `CKAN_BASE_URL`, `CKAN_API_KEY`, `CKAN_OWNER_ORG` |
+| TestGen | `TESTGEN_MODE`, base URL, authentication, project, table group, suite, and timeout settings |
+| Publication | `CATALOG_PROFILE_NAME`, `MINIMUM_SUBMISSION_SCORE` |
+
+Production validation rejects demo authentication, wildcard CORS or trusted
+hosts, seeded demo data, enabled API docs, placeholder secrets, and incomplete
+real CKAN/TestGen configuration.
+
+## Production topology
+
+The production compose stack contains four services:
 
 ```text
-http://localhost:5173
+Browser / optional Cloudflare
+                    |
+                Caddy
+                    |
+            nginx frontend
+                    |
+             FastAPI backend
+                    |
+            PostgreSQL 16
 ```
 
-### Stage 3 test sequence
+Only the Caddy edge should be reachable from the public network. The backend,
+frontend, and database communicate over Docker networks. Caddy provides the
+security headers, compressed responses, JSON access logs, and the long proxy
+read timeout needed for synchronous TestGen polling. Direct Caddy HTTPS is
+supported through `APP_SITE_ADDRESS`; it can also be placed behind a managed
+edge such as Cloudflare.
 
-1. Open **Data Asset 360** → **Data Quality**.
-2. Select the structured `APPLICATION` resource.
-3. Click **Assess Data Quality**.
-4. Confirm the latest quality profile says `TESTGEN` and suggested expectations appear.
-5. Approve **ZIP Code should use a recognized 5-digit or ZIP+4 format** and **Application ID is required**.
-6. Click **Run Approved Checks**.
-7. Confirm quality issues appear and the score changes.
-8. Open **Stewardship Inbox** and confirm the failed checks became Quality tasks.
-9. Return to Data Quality and click **Guide Me** on an issue.
-10. Record one of the four decisions:
-    - The data is incorrect
-    - This is a valid exception
-    - The quality expectation needs to change
-    - I need expert review
-11. Confirm resolved work disappears from the active Inbox.
-12. Re-test the existing publication workflow through immutable release → DCAT JSON-LD → catalog publisher.
+Before a production deployment:
 
-## Installing TestGen for the real integration
+1. Configure `.env.production` with mode `600` permissions.
+2. Use local or OIDC authentication, never demo mode.
+3. Rotate development or exposed credentials.
+4. Create and verify a PostgreSQL backup.
+5. Confirm only required public ports are exposed.
+6. Run the production hardening and go-live checks.
 
-DataKitchen's current recommended Mac/Linux installation uses its installer and supports Docker Compose or a pip/embedded-PostgreSQL mode. Install TestGen **separately** from AI Data Steward so TestGen remains a replaceable technical engine rather than becoming the system of record.
+Start production with:
 
-A helper script is included at:
+```bash
+docker compose --env-file .env.production \
+    -f docker-compose.prod.yml up --build -d
+```
+
+Useful operational commands and recovery procedures are documented in
+[PRODUCTION_DEPLOYMENT_GUIDE.md](PRODUCTION_DEPLOYMENT_GUIDE.md). The main
+checks are:
+
+```bash
+./scripts/check_production_hardening.py .env.production
+./scripts/go_live_check.sh https://your-domain.example
+./scripts/backup_postgres.sh
+./scripts/verify_backup.sh
+```
+
+Do not delete production volumes, expose PostgreSQL, overwrite production
+configuration casually, or copy development files or databases directly into
+production. Release through version control, verified tests, manual acceptance,
+backup, and controlled deployment.
+
+## Repository map
 
 ```text
-scripts/install_testgen.sh
+backend/app/models.py                 Domain model
+backend/app/api/                      FastAPI routes and auth/admin APIs
+backend/app/services/                 Readiness, tasks, quality, snapshots, publication
+backend/app/integrations/testgen/     TestGen adapter
+backend/tests/                        Backend regression tests
+frontend/src/main.jsx                 Current React application
+frontend/src/api.js                   Frontend API/auth helper
+frontend/vite.config.js               DEV-only `/api` proxy to FastAPI on port 8001
+docker-compose.dev.yml                Isolated development stack
+docker-compose.prod.yml               Production-shaped stack
+deploy/caddy/Caddyfile                Production edge configuration
+scripts/                              Backup, hardening, install, and smoke checks
+docs/ci/                              CI proposal, intentionally outside GitHub's active workflow directory
 ```
 
-After installation:
+## Product direction
 
-1. Connect TestGen to the target PostgreSQL/database with read-only permissions.
-2. Create a Table Group around the table(s) you want to assess.
-3. Run profiling once in TestGen.
-4. Create a Test Suite.
-5. If your edition supports REST access tokens, create one and put it in `TESTGEN_TOKEN`.
-6. Switch AI Data Steward to `TESTGEN_MODE=real`.
-7. Map the AI Data Steward resource to the TestGen Table Group / Test Suite IDs.
-
-## What each TestGen mode currently supports
-
-The two modes are not yet feature-equivalent. This matters when reading the
-workflow above, because the suggest/approve/run loop is exercised by the mock.
-
-| Capability | `mock` | `real` |
-| --- | --- | --- |
-| Profiling run and quality score | yes | yes |
-| Hygiene findings and the guided finding workbench | no findings are produced | yes |
-| Suggested expectations | yes | not yet proposed |
-| Approved expectations pushed to TestGen as tests | no | not yet |
-| Test run results stored per rule (`latest_result`) | yes | not yet |
-| Dimension scores (completeness, validity, ...) | synthesized | not populated |
-
-Closing these gaps is tracked in the Stage 4 candidates below.
-
-## Important architecture boundary
-
-- **AI Data Steward** = catalog, governance, human decisions, tasks, guidance, audit, publication.
-- **TestGen** = technical profiling, test execution, monitoring, quality scoring.
-- **CKAN/DCAT** = enterprise catalog publication and discovery.
-
-AI Data Steward stores TestGen object IDs in `quality_engine_resources`; the core catalog model never depends on TestGen-specific tables.
-
-## New Stage 3 tables
-
-- `quality_engine_resources`
-- `quality_issues`
-- `quality_decisions`
-
-Existing Stage 2 tables remain intact.
-
-## Stage 4 candidates
-
-- synchronize detailed TestGen column profiles and hygiene findings using the expanded REST API
-- map AI Data Steward approved business expectations into TestGen test definitions/import API
-- TestGen monitor integration for freshness, volume, schema and metric anomalies
-- Connect the existing AI Data Steward Rule Registry as the canonical governed expectation model
-- remediation workflow / assignment to source-system owners
-- trend charts and recurring quality schedules
-- MCP-assisted Steward Copilot
+Future work should deepen guided metadata capture, discovery, governance
+evidence, quality trends, remediation, enterprise catalog interoperability,
+and relationships between information across systems. New features should
+answer seven questions: what the steward is trying to understand, what
+governance concept that represents, how it is stored, how it maps to standards,
+what evidence supports it, who approved it, and how it becomes actionable or
+publishable.

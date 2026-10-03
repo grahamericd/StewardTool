@@ -164,6 +164,96 @@ class AssetMetadata(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+class DiscoveryCandidateKind(str, enum.Enum):
+    BUSINESS_CONTEXT = "BUSINESS_CONTEXT"
+    SYSTEM = "SYSTEM"
+    INFORMATION = "INFORMATION"
+    LOCATION = "LOCATION"
+    RELATIONSHIP = "RELATIONSHIP"
+
+
+class DiscoveryCandidateStatus(str, enum.Enum):
+    SUGGESTED = "SUGGESTED"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+    UNKNOWN = "UNKNOWN"
+    NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
+
+
+class DiscoveryCandidate(Base):
+    __tablename__ = "discovery_candidates"
+    __table_args__ = (UniqueConstraint("organization_id", "name", "kind", name="uq_discovery_candidate_org_name_kind"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    rejected_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    parent_candidate_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_candidates.id", ondelete="SET NULL"))
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("data_assets.id", ondelete="SET NULL"))
+    system_id: Mapped[int | None] = mapped_column(ForeignKey("catalog_systems.id", ondelete="SET NULL"))
+    resource_id: Mapped[int | None] = mapped_column(ForeignKey("data_resources.id", ondelete="SET NULL"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), default=DiscoveryCandidateKind.INFORMATION.value, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default=DiscoveryCandidateStatus.SUGGESTED.value, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), default="USER", nullable=False)
+    suggested_by_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSON)
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    rejected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def current_status(self):
+        return self.status
+
+
+class DiscoveryObservation(Base):
+    __tablename__ = "discovery_observations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("discovery_candidates.id", ondelete="CASCADE"), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    observation_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), default="USER", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class DiscoveryRelationship(Base):
+    __tablename__ = "discovery_relationships"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "left_candidate_id", "right_candidate_id", "relationship_type", name="uq_discovery_relationship"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    left_candidate_id: Mapped[int] = mapped_column(ForeignKey("discovery_candidates.id", ondelete="CASCADE"), nullable=False)
+    right_candidate_id: Mapped[int] = mapped_column(ForeignKey("discovery_candidates.id", ondelete="CASCADE"), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default=DiscoveryCandidateStatus.SUGGESTED.value, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    rejected_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    rejected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    details: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class DiscoveryProvenance(Base):
+    __tablename__ = "discovery_provenance"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    performed_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    details: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class GovernanceRequirement(Base):
     __tablename__ = "governance_requirements"
     __table_args__ = (UniqueConstraint("organization_id", "requirement_key", name="uq_org_requirement"),)

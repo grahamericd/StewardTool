@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 # Identifiers that are interpolated into TestGen URL paths. Blank is allowed so
 # that clearing a field in the UI still validates; anything else must be a plain
@@ -35,6 +35,58 @@ class AssetGovernanceUpdate(BaseModel):
     classification: CodeText | None = None
     retention_requirement: LongText | None = None
     retention_authority: LongText | None = None
+
+
+class DiscoveryCandidateCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    kind: CodeText = "INFORMATION"
+    summary: LongText | None = None
+    description: LongText | None = None
+    status: CodeText = "SUGGESTED"
+    source: CodeText = "USER"
+    parent_candidate_id: int | None = None
+    asset_id: int | None = None
+    system_id: int | None = None
+    resource_id: int | None = None
+    suggested_by_ai: bool = False
+    details: dict | None = None
+
+
+class DiscoveryCandidateUpdate(BaseModel):
+    name: ShortText | None = None
+    kind: CodeText | None = None
+    summary: LongText | None = None
+    description: LongText | None = None
+    status: CodeText | None = None
+    source: CodeText | None = None
+    parent_candidate_id: int | None = None
+    asset_id: int | None = None
+    system_id: int | None = None
+    resource_id: int | None = None
+    suggested_by_ai: bool | None = None
+    details: dict | None = None
+
+
+class DiscoveryObservationCreate(BaseModel):
+    candidate_id: int = Field(gt=0)
+    observation_type: CodeText = Field(min_length=1)
+    details: dict = Field(default_factory=dict)
+    source: CodeText = "USER"
+
+
+class DiscoveryRelationshipCreate(BaseModel):
+    left_candidate_id: int = Field(gt=0)
+    right_candidate_id: int = Field(gt=0)
+    relationship_type: CodeText = Field(min_length=1)
+    status: CodeText = "SUGGESTED"
+    details: dict | None = None
+
+
+class DiscoveryProvenanceCreate(BaseModel):
+    entity_type: CodeText = Field(min_length=1)
+    entity_id: int = Field(gt=0)
+    action: CodeText = Field(min_length=1)
+    details: dict | None = None
 
 
 class ResourceCreate(BaseModel):
@@ -109,6 +161,16 @@ class ReviewRequest(BaseModel):
 
 class RejectRequest(BaseModel):
     comments: LongText = Field(min_length=1)
+
+    @field_validator("comments")
+    @classmethod
+    def comments_must_contain_real_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("A review note is required when returning information for changes.")
+        return value
 
 
 class QualityEngineLinkCreate(BaseModel):

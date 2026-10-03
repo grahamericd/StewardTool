@@ -37,3 +37,18 @@ def test_submitter_cannot_self_approve():
             assert submitted.status_code == 200
             self_approve = client.post(f"/api/assets/{aid}/approve", headers=STEWARD, json={"comments":"test"})
             assert self_approve.status_code in {400, 403}
+
+
+def test_reject_requires_non_blank_review_note():
+    with client:
+        assets = client.get("/api/assets", headers=STEWARD).json()
+        asset = next((a for a in assets if a["publication"]["status"] in {"DRAFT", "REJECTED", "NEEDS_UPDATE"} and a["readiness"]["ready_to_submit"]), assets[0])
+        aid = asset["asset"]["asset_id"]
+
+        submitted = client.post(f"/api/assets/{aid}/submit", headers=STEWARD, json={"comments":"Ready for review."})
+        assert submitted.status_code == 200
+
+        rejected = client.post(f"/api/assets/{aid}/reject", headers=APPROVER, json={"comments":"   "})
+        assert rejected.status_code == 422
+        detail = rejected.json().get("detail", [])
+        assert any("review note" in str(item).lower() for item in detail)

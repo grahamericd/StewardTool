@@ -9,13 +9,14 @@ from ..config import settings
 from ..db import get_db
 from ..models import (
     AssetMetadata, AssetPublication, AssetRelease, AssetResource, CatalogSystem, DataAsset, DataResource,
-    PublicationEvent, QualityDecision, QualityEngineResource, QualityIssue, QualityProfile, QualityResult, QualityRule, StewardshipReview, StewardshipTask,
+    DiscoveryCandidate, DiscoveryCandidateStatus, DiscoveryProvenance, PublicationEvent, QualityDecision, QualityEngineResource, QualityIssue, QualityProfile, QualityResult, QualityRule, StewardshipReview, StewardshipTask,
 )
 from ..schemas import (
     AssetCreate, AssetGovernanceUpdate, MetadataUpsert, QualityProfileCreate, QualityResultCreate,
     QualityRuleCreate, RejectRequest, ResourceCreate, OfficialSourceDecision, ReviewRequest, SubmitRequest, SystemCreate, TaskComplete,
     QualityEngineLinkCreate, QualityAssessmentRequest, QualityRunRequest, QualityRuleStatusUpdate, QualityDecisionCreate,
     HygieneFindingDecisionCreate, PeriodicReviewCreate, UnderstandingUpdate,
+    DiscoveryCandidateCreate, DiscoveryCandidateUpdate,
 )
 from ..services.publication import approve, mark_needs_update_if_published, publish, reject, submit_for_review
 from ..services.readiness import calculate_readiness
@@ -119,6 +120,32 @@ def _task_bucket(task):
     if status in {"WAITING", "BLOCKED", "NEEDS_EXPERT_REVIEW"}:
         return "WAITING"
     return "NOW"
+
+
+def _serialize_discovery_candidate(candidate):
+    return {
+        "id": candidate.id,
+        "organization_id": candidate.organization_id,
+        "name": candidate.name,
+        "kind": candidate.kind,
+        "summary": candidate.summary,
+        "description": candidate.description,
+        "status": candidate.status,
+        "source": candidate.source,
+        "suggested_by_ai": candidate.suggested_by_ai,
+        "details": candidate.details,
+        "parent_candidate_id": candidate.parent_candidate_id,
+        "asset_id": candidate.asset_id,
+        "system_id": candidate.system_id,
+        "resource_id": candidate.resource_id,
+        "created_by": candidate.created_by,
+        "confirmed_by": candidate.confirmed_by,
+        "rejected_by": candidate.rejected_by,
+        "confirmed_at": candidate.confirmed_at.isoformat() if candidate.confirmed_at else None,
+        "rejected_at": candidate.rejected_at.isoformat() if candidate.rejected_at else None,
+        "created_at": candidate.created_at.isoformat(),
+        "updated_at": candidate.updated_at.isoformat(),
+    }
 
 
 # Ordering by the priority string alone sorted alphabetically, which put LOW
@@ -579,6 +606,166 @@ def complete_periodic_review(asset_id: int, payload: PeriodicReviewCreate, ctx=D
             else "Review complete. No stewardship changes need follow-up."
         ),
     }
+
+
+@router.get("/discovery/summary")
+def discovery_summary(ctx=Depends(current_context), db: Session = Depends(get_db)):
+    organization_id = ctx["organization_id"]
+    candidates = db.scalars(select(DiscoveryCandidate).where(DiscoveryCandidate.organization_id == organization_id)).all()
+    assets = db.scalars(select(DataAsset).where(DataAsset.organization_id == organization_id)).all()
+    systems = db.scalars(select(CatalogSystem).where(CatalogSystem.organization_id == organization_id)).all()
+    resources = db.scalars(select(DataResource).where(DataResource.organization_id == organization_id)).all()
+    confirmed_candidates = [c for c in candidates if c.status == DiscoveryCandidateStatus.CONFIRMED.value]
+    confirmed_assets = [a for a in assets if a.asset_status in {"ACTIVE", "DRAFT"}]
+    confirmed_systems = [s for s in systems if s.lifecycle_status in {"ACTIVE", "DRAFT"}]
+    confirmed_locations = [r for r in resources if r.resource_type in {"TABLE", "FILE", "DATABASE", "API", "DOCUMENT", "REPORT", "SYSTEM"}]
+
+    # Ground Zero is a server-side state, not a browser-local one: a new or
+    # uninitialized organization has no meaningful confirmed landscape yet.
+    ground_zero = (
+        len(confirmed_assets) == 0
+        and len(confirmed_systems) == 0
+        and len(confirmed_locations) == 0
+        and len(confirmed_candidates) == 0
+    )
+
+    return {
+        "ground_zero": ground_zero,
+        "meaningful_landscape": not ground_zero,
+        "known_assets": len(confirmed_assets),
+        "known_systems": len(confirmed_systems),
+        "known_locations": len(confirmed_locations),
+        "candidate_count": len(candidates),
+        "confirmed_count": len(confirmed_candidates),
+        "suggested_count": sum(1 for c in candidates if c.status == DiscoveryCandidateStatus.SUGGESTED.value),
+        "needs_confirmation_count": sum(1 for c in candidates if c.status == DiscoveryCandidateStatus.NEEDS_CONFIRMATION.value),
+        "rejected_count": sum(1 for c in candidates if c.status == DiscoveryCandidateStatus.REJECTED.value),
+        "unknown_count": sum(1 for c in candidates if c.status == DiscoveryCandidateStatus.UNKNOWN.value),
+    }
+
+
+@router.get("/discovery/candidates")
+def list_discovery_candidates(ctx=Depends(current_context), db: Session = Depends(get_db)):
+    org_id = ctx["organization_id"]
+    candidates = db.scalars(
+        select(DiscoveryCandidate)
+        .where(DiscoveryCandidate.organization_id == org_id)
+        .order_by(DiscoveryCandidate.created_at.desc())
+    ).all()
+    return [_serialize_discovery_candidate(candidate) for candidate in candidates]
+
+
+@router.post("/discovery/candidates")
+def create_discovery_candidate(payload: DiscoveryCandidateCreate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    org_id = ctx["organization_id"]
+    if payload.status in {DiscoveryCandidateStatus.CONFIRMED.value, DiscoveryCandidateStatus.REJECTED.value}:
+        raise HTTPException(status_code=400, detail="Candidates must be created as suggested and confirmed or rejected explicitly by a human.")
+    if payload.parent_candidate_id:
+        parent = db.get(DiscoveryCandidate, payload.parent_candidate_id)
+        if not parent or parent.organization_id != org_id:
+            raise HTTPException(status_code=400, detail="Parent candidate does not belong to this organization")
+    if payload.asset_id:
+        asset = db.get(DataAsset, payload.asset_id)
+        if not asset or asset.organization_id != org_id:
+            raise HTTPException(status_code=400, detail="Asset does not belong to this organization")
+    if payload.system_id:
+        system = db.get(CatalogSystem, payload.system_id)
+        if not system or system.organization_id != org_id:
+            raise HTTPException(status_code=400, detail="System does not belong to this organization")
+    if payload.resource_id:
+        resource = db.get(DataResource, payload.resource_id)
+        if not resource or resource.organization_id != org_id:
+            raise HTTPException(status_code=400, detail="Resource does not belong to this organization")
+
+    candidate = DiscoveryCandidate(
+        organization_id=org_id,
+        created_by=ctx["user"].id,
+        name=payload.name.strip(),
+        kind=payload.kind,
+        summary=payload.summary.strip() if payload.summary else None,
+        description=payload.description.strip() if payload.description else None,
+        status=payload.status or DiscoveryCandidateStatus.SUGGESTED.value,
+        source=payload.source,
+        suggested_by_ai=bool(payload.suggested_by_ai),
+        parent_candidate_id=payload.parent_candidate_id,
+        asset_id=payload.asset_id,
+        system_id=payload.system_id,
+        resource_id=payload.resource_id,
+        details=payload.details,
+    )
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    return _serialize_discovery_candidate(candidate)
+
+
+@router.patch("/discovery/candidates/{candidate_id}")
+def update_discovery_candidate(candidate_id: int, payload: DiscoveryCandidateUpdate, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    candidate = db.get(DiscoveryCandidate, candidate_id)
+    if not candidate or candidate.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Discovery candidate not found")
+    if payload.status in {DiscoveryCandidateStatus.CONFIRMED.value, DiscoveryCandidateStatus.REJECTED.value}:
+        raise HTTPException(status_code=400, detail="Use the explicit confirm or reject action to change a candidate to confirmed or rejected.")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        setattr(candidate, field, value)
+
+    candidate.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(candidate)
+    return _serialize_discovery_candidate(candidate)
+
+
+@router.post("/discovery/candidates/{candidate_id}/confirm")
+def confirm_discovery_candidate(candidate_id: int, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    candidate = db.get(DiscoveryCandidate, candidate_id)
+    if not candidate or candidate.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Discovery candidate not found")
+    if candidate.status == DiscoveryCandidateStatus.CONFIRMED.value:
+        return _serialize_discovery_candidate(candidate)
+
+    candidate.status = DiscoveryCandidateStatus.CONFIRMED.value
+    candidate.confirmed_by = ctx["user"].id
+    candidate.confirmed_at = datetime.now(timezone.utc)
+    candidate.updated_at = candidate.confirmed_at
+    db.add(DiscoveryProvenance(
+        organization_id=ctx["organization_id"],
+        entity_type="DiscoveryCandidate",
+        entity_id=candidate.id,
+        action="CONFIRMED",
+        performed_by=ctx["user"].id,
+        details={"name": candidate.name, "kind": candidate.kind, "source": candidate.source},
+    ))
+    db.commit()
+    db.refresh(candidate)
+    return _serialize_discovery_candidate(candidate)
+
+
+@router.post("/discovery/candidates/{candidate_id}/reject")
+def reject_discovery_candidate(candidate_id: int, ctx=Depends(require_roles("STEWARD", "ORG_ADMIN", "ENTERPRISE_ADMIN")), db: Session = Depends(get_db)):
+    candidate = db.get(DiscoveryCandidate, candidate_id)
+    if not candidate or candidate.organization_id != ctx["organization_id"]:
+        raise HTTPException(status_code=404, detail="Discovery candidate not found")
+    if candidate.status == DiscoveryCandidateStatus.REJECTED.value:
+        return _serialize_discovery_candidate(candidate)
+
+    candidate.status = DiscoveryCandidateStatus.REJECTED.value
+    candidate.rejected_by = ctx["user"].id
+    candidate.rejected_at = datetime.now(timezone.utc)
+    candidate.updated_at = candidate.rejected_at
+    db.add(DiscoveryProvenance(
+        organization_id=ctx["organization_id"],
+        entity_type="DiscoveryCandidate",
+        entity_id=candidate.id,
+        action="REJECTED",
+        performed_by=ctx["user"].id,
+        details={"name": candidate.name, "kind": candidate.kind, "source": candidate.source},
+    ))
+    db.commit()
+    db.refresh(candidate)
+    return _serialize_discovery_candidate(candidate)
 
 
 @router.get("/tasks")
