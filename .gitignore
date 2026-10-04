@@ -34,3 +34,5 @@ backups/
 # Local databases and test artefacts
 *.db
 .pytest_cache/
+frontend/playwright-report/
+frontend/test-results/

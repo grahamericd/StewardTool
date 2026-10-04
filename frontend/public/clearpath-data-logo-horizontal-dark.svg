@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1700 440"
+     width="1700"
+     height="440"
+     role="img"
+     aria-labelledby="clearpath-title clearpath-desc">
+  <title id="clearpath-title">ClearPath Data logo</title>
+  <desc id="clearpath-desc">ClearPath Data wordmark and connected convergence mark in a high-contrast dark theme.</desc>
+
+  <defs>
+    <linearGradient id="path-navy" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#DDF6FF"/>
+      <stop offset="1" stop-color="#8EE7F5"/>
+    </linearGradient>
+    <linearGradient id="path-teal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8EE7F5"/>
+      <stop offset="1" stop-color="#57D9F8"/>
+    </linearGradient>
+    <linearGradient id="path-aqua" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#BDEEFF"/>
+      <stop offset="1" stop-color="#63D9EA"/>
+    </linearGradient>
+  </defs>
+
+  <g id="clearpath-mark" transform="translate(28 18)">
+    <circle cx="84" cy="86" r="31" fill="#EAF9FF"/>
+    <circle cx="56" cy="178" r="31" fill="#AEEFFF"/>
+    <circle cx="76" cy="286" r="31" fill="#DDF6FF"/>
+    <circle cx="158" cy="355" r="29" fill="#8EE7F5"/>
+
+    <path d="M108 101 C175 116 204 186 277 196 C321 202 351 199 385 205"
+          fill="none" stroke="url(#path-navy)" stroke-width="22" stroke-linecap="round"/>
+    <path d="M85 180 C158 177 210 180 273 199 C317 212 350 214 385 211"
+          fill="none" stroke="url(#path-teal)" stroke-width="22" stroke-linecap="round"/>
+    <path d="M104 275 C169 250 222 218 277 211 C320 205 352 210 385 215"
+          fill="none" stroke="url(#path-navy)" stroke-width="22" stroke-linecap="round"/>
+    <path d="M181 337 C226 297 248 244 289 223 C324 205 354 213 385 218"
+          fill="none" stroke="url(#path-aqua)" stroke-width="22" stroke-linecap="round"/>
+
+    <circle cx="226" cy="187" r="7" fill="#BDEEFF"/>
+    <circle cx="265" cy="232" r="7" fill="#EAF9FF"/>
+
+    <path d="M331 160 A78 78 0 0 1 441 184"
+          fill="none" stroke="#F4B72B" stroke-width="13" stroke-linecap="round"/>
+    <path d="M353 176 A51 51 0 0 1 426 192"
+          fill="none" stroke="#FBE6A7" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="401" cy="214" r="34" fill="#FFFFFF" stroke="#D9E2EC" stroke-width="3"/>
+    <circle cx="401" cy="214" r="25" fill="#F4B72B"/>
+    <circle cx="393" cy="206" r="7" fill="#FBE6A7" opacity="0.9"/>
+  </g>
+
+  <g id="clearpath-wordmark"
+     font-family="Public Sans, Inter, Arial, sans-serif"
+     font-size="126"
+     font-weight="700"
+     letter-spacing="-5">
+    <text x="500" y="274" fill="#F1F9FF">ClearPath</text>
+    <text x="1175" y="274" fill="#7BE4F7">Data</text>
+  </g>
+</svg>
