@@ -4,7 +4,8 @@ import { api, clearAccessToken, getAccessToken, publicApi, setAccessToken, setDe
 import "./styles.css";
 
 const USERS = { Steward: "steward@demo.gov", "Ground Zero": "groundzero@demo.gov", Approver: "approver@demo.gov", "Org Admin": "admin@demo.gov", "Enterprise Admin": "enterprise@demo.gov" };
-const PRIMARY_NAV = ["Steward Home", "My Information", "Discover Information", "My Next Steps"];
+const LANDSCAPE_SESSION_KEY = "ai_data_steward_landscape_session";
+const PRIMARY_NAV = ["Steward Home", "My Information", "Business Landscape", "Systems inventory", "Relationship Builder", "Discover Information", "My Next Steps"];
 const REVIEW_NAV = ["Review Queue", "Publishing History"];
 const ADMIN_NAV = ["User Administration"];
 
@@ -12,15 +13,20 @@ const ADMIN_NAV = ["User Administration"];
 // two of them sent description and location tasks to the Governance guide,
 // which has no step for them, so the guided task never started.
 const UNDERSTAND_TASK_TYPES = ["business_definition","theme","keywords","update_frequency","contact","review_change_purpose"];
-const LOCATION_TASK_TYPES = ["has_resource","authoritative_source","review_change_locations","review_change_official_source"];
+const LOCATION_TASK_TYPES = ["has_resource","authoritative_source","review_change_locations","review_change_official_source","landscape_official_source"];
 
 export function routeForTask(task){
   if(!task) return null;
+  if(task.task_type==="landscape_submit_for_review"){
+    return {tab:"Share & Publish",guided:task,qualityIssueId:null};
+  }
   if(task.source_type==="QUALITY_ISSUE" && task.source_reference){
     return { tab:"Can This Information Be Trusted?", guided:null, qualityIssueId:Number(task.source_reference) };
   }
   const route = { tab:"Governance", guided:task, qualityIssueId:null };
-  if(task.source_type==="PERIODIC_REVIEW" || task.source_type==="PERIODIC_REVIEW_CHANGE" || task.task_type==="periodic_review") route.tab="Review & Maintain";
+  // The scheduled review opens the broad review questionnaire. Tasks created
+  // by that review must instead route to their focused correction workflow.
+  if(task.source_type==="PERIODIC_REVIEW" || task.task_type==="periodic_review" || task.task_type==="review_change_active_use") route.tab="Review & Maintain";
   else if(task.governance_domain==="QUALITY") route.tab="Can This Information Be Trusted?";
   else if(["METADATA","DESCRIPTION"].includes(task.governance_domain) || UNDERSTAND_TASK_TYPES.includes(task.task_type)) route.tab="Help Others Understand It";
   else if(LOCATION_TASK_TYPES.includes(task.task_type)) route.tab="Where It Lives";
@@ -31,6 +37,16 @@ function NextStepCallout({title, body}) {
   return <div className="education strong"><b>{title}</b><p>{body}</p></div>;
 }
 
+function BrandLogo({dark = false}) {
+  return (
+    <img
+      className="brand-logo"
+      src={dark ? "/clearpath-data-logo-horizontal-dark.svg" : "/clearpath-data-logo-horizontal-light.svg"}
+      alt="ClearPath Data logo"
+    />
+  );
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props){ super(props); this.state={error:null}; }
   static getDerivedStateFromError(error){ return {error}; }
@@ -38,7 +54,7 @@ class ErrorBoundary extends React.Component {
   render(){
     if(!this.state.error) return this.props.children;
     return <div className="auth-shell"><div className="auth-card">
-      <div className="brand">AI Data Steward</div>
+      <div className="brand"><BrandLogo /></div>
       <h1>This page could not be displayed</h1>
       <p>Nothing you entered has been lost. Reload the page to continue; if it keeps happening, tell your administrator what you were doing.</p>
       <button onClick={()=>window.location.reload()}>Reload</button>
@@ -58,6 +74,17 @@ function App() {
   const [systems, setSystems] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [discoverySummary, setDiscoverySummary] = useState(null);
+  const [landscapeSessions, setLandscapeSessions] = useState([]);
+  const [landscapeScope, setLandscapeScope] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LANDSCAPE_SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  });
   const [selectedAssetId, setSelectedAssetId] = useState(null);
   const [assetTab, setAssetTab] = useState("Overview");
   const [selectedQualityIssueId, setSelectedQualityIssueId] = useState(null);
@@ -70,6 +97,10 @@ function App() {
   const userEmail = authConfig?.mode==="demo" ? USERS[userLabel] : null;
   const canReview = ["APPROVER","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
   const canAdministerUsers = ["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
+  const canConstructLandscape = ["STEWARD","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(me?.role);
+  const primaryNavigation = canConstructLandscape
+    ? PRIMARY_NAV
+    : PRIMARY_NAV.filter(item=>!["Discover Information","My Next Steps"].includes(item));
 
   const fail = useCallback(text=>{ setMessageTone("error"); setMessage(text); },[]);
   const succeed = useCallback(text=>{ setMessageTone("success"); setMessage(text||""); },[]);
@@ -87,11 +118,28 @@ function App() {
   },[fail]);
 
   async function refresh() {
-    const [meData, dash, assetData, systemData, taskData, discoveryData] = await Promise.all([
-      api("/me", userEmail), api("/dashboard", userEmail), api("/assets", userEmail), api("/systems", userEmail), api("/tasks", userEmail), api("/discovery/summary", userEmail)
+    const [meData, dash, assetData, systemData, taskData, discoveryData, sessionData] = await Promise.all([
+      api("/me", userEmail), api("/dashboard", userEmail), api("/assets", userEmail), api("/systems", userEmail), api("/tasks", userEmail), api("/discovery/summary", userEmail), api("/discovery/sessions", userEmail)
     ]);
-    setMe(meData); setDashboard(dash); setAssets(assetData); setSystems(systemData); setTasks(taskData); setDiscoverySummary(discoveryData);
+    setMe(meData); setDashboard(dash); setAssets(assetData); setSystems(systemData); setTasks(taskData); setDiscoverySummary(discoveryData); setLandscapeSessions(Array.isArray(sessionData) ? sessionData : []);
+    const savedId = localStorage.getItem(LANDSCAPE_SESSION_KEY);
+    if (savedId) {
+      const saved = (sessionData||[]).find(session => Number(session.id) === Number(savedId));
+      if (saved) setLandscapeScope(saved);
+      else {
+        setLandscapeScope(null);
+        localStorage.removeItem(LANDSCAPE_SESSION_KEY);
+      }
+    } else if ((sessionData||[]).length) {
+      const latest = sessionData[0];
+      setLandscapeScope(latest);
+      localStorage.setItem(LANDSCAPE_SESSION_KEY, String(latest.id));
+    } else {
+      setLandscapeScope(null);
+      localStorage.removeItem(LANDSCAPE_SESSION_KEY);
+    }
     if (!selectedAssetId && assetData.length) setSelectedAssetId(assetData[0].asset.asset_id);
+    return { tasks: taskData, assets: assetData };
   }
   // A 401 anywhere means the session ended. Without this the user stayed in the
   // signed-in shell with stale data and every later action failed.
@@ -157,6 +205,7 @@ function App() {
   async function handleLogout(){
     try{ await api("/auth/logout",null,{method:"POST"}); }catch{}
     clearAccessToken();
+    localStorage.removeItem(LANDSCAPE_SESSION_KEY);
     setSignedIn(false);
     setMe(null); setDashboard(null); setAssets([]); setSystems([]); setTasks([]);
     // Leaving these set showed the previous user's asset to the next person who
@@ -167,13 +216,66 @@ function App() {
     setMessage("");
   }
 
+  async function handleCreateLandscape({ name, businessDomain, stewardOwner, purpose }) {
+    const payload = {
+      title: name.trim(),
+      status: "ACTIVE",
+      summary: purpose.trim() || "Ground Zero landscape scope",
+      context_snapshot: {
+        landscape_name: name.trim(),
+        business_domain: businessDomain.trim() || null,
+        steward_owner: stewardOwner.trim() || null,
+        purpose: purpose.trim() || null,
+        business_first: true,
+        is_ground_zero_scope: true,
+        created_via: "new_landscape_flow",
+      },
+    };
+    const created = await api("/discovery/sessions", userEmail, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    setLandscapeScope(created);
+    setLandscapeSessions(prev => [created, ...prev.filter(session => session.id !== created.id)]);
+    localStorage.setItem(LANDSCAPE_SESSION_KEY, String(created.id));
+    return created;
+  }
+
+  async function handleResetLandscape() {
+    localStorage.removeItem(LANDSCAPE_SESSION_KEY);
+    setLandscapeScope(null);
+    setPage("Steward Home");
+  }
+
   async function handlePasswordChange(currentPassword,newPassword){
     await api("/auth/change-password",null,{method:"POST",body:JSON.stringify({current_password:currentPassword,new_password:newPassword})});
     await refresh();
     setMessage("Password changed.");
   }
 
-  if(!authReady) return <div className="auth-shell"><div className="auth-card"><div className="brand">AI Data Steward</div><p>Loading secure sign-in…</p></div></div>;
+  async function handleLandscapeHandoffStage(stage){
+    if(stage.page==="Discover Information"){
+      setPage("Discover Information");
+      return;
+    }
+    if(stage.page==="Review Queue"){
+      try{await refresh()}catch(e){fail(e.message)}
+      setPage("Review Queue");
+      return;
+    }
+    if(!stage.asset_id) return;
+    setSelectedAssetId(Number(stage.asset_id));
+    setSelectedQualityIssueId(null);
+    setAssetTab(stage.tab||"Overview");
+    setGuidedTask(stage.task_id?tasks.find(task=>task.id===stage.task_id)||null:null);
+    setPage("Information Details");
+    try{
+      const refreshed=await refresh();
+      if(stage.task_id) setGuidedTask(refreshed?.tasks?.find(task=>task.id===stage.task_id)||null);
+    }catch(e){fail(e.message)}
+  }
+
+  if(!authReady) return <div className="auth-shell"><div className="auth-card"><div className="brand"><BrandLogo /></div><p>Loading secure sign-in…</p></div></div>;
 
   if(authConfig?.mode!=="demo" && !signedIn){
     return <LoginPage onLogin={handleLogin} message={message} setMessage={setMessage}/>;
@@ -185,12 +287,12 @@ function App() {
 
   return <div className={`app${navOpen?" nav-open":""}`}>
     <aside onClick={e=>{if(e.target.closest("button")) setNavOpen(false)}}>
-      <div className="brand">AI Data Steward</div>
-      <div className="tagline">Guided stewardship, one step at a time.</div>
+      <div className="brand"><BrandLogo dark /></div>
+      <div className="tagline">Clear path from discovery to governance.</div>
 
       <div className="nav-section">
         <div className="nav-label">Your stewardship</div>
-        <nav>{PRIMARY_NAV.map(n => {
+        <nav>{primaryNavigation.map(n => {
           const active = page===n || (page==="Information Details" && n==="My Information");
           return <button key={n} onClick={() => setPage(n)} className={active?"active":""}>{n}</button>;
         })}</nav>
@@ -208,7 +310,7 @@ function App() {
 
       <div className="aside-guidance">
         <b>Not sure where to start?</b>
-        <p>Open My Next Steps. AI Data Steward will guide you to the work that needs attention.</p>
+        <p>Open My Next Steps. ClearPath Data will guide you to the work that needs attention.</p>
       </div>
     </aside>
     <main className={busy?"is-busy":undefined} aria-busy={busy||undefined}>
@@ -220,7 +322,7 @@ function App() {
           : <div className="signed-in-user"><div><b>{me?.user?.display_name||me?.user?.email}</b><small>{me?.user?.email}</small></div><button onClick={handleLogout}>Sign out</button></div>}
       </header>
       {message && <div className={`message message-${messageTone}`} role="status" aria-live="polite">{message}</div>}
-      {page === "Steward Home" && <StewardHome dashboard={dashboard} assets={assets} tasks={tasks} discoverySummary={discoverySummary} onboardingKey={me?`${me.organization?.id||"org"}:${me.user?.id||me.user?.email}`:userEmail||"demo"} onTask={task=>{
+      {page === "Steward Home" && <StewardHome role={me?.role} dashboard={dashboard} assets={assets} systems={systems} tasks={tasks} discoverySummary={discoverySummary} onboardingKey={me?`${me.organization?.id||"org"}:${me.user?.id||me.user?.email}`:userEmail||"demo"} landscapeScope={landscapeScope} onCreateLandscape={handleCreateLandscape} onResetLandscape={handleResetLandscape} onTask={task=>{
         const route=routeForTask(task);
         setSelectedAssetId(task.asset_id);
         setGuidedTask(route.guided);
@@ -229,7 +331,10 @@ function App() {
         setPage("Information Details");
       }} onInventory={()=>setPage("My Information")} onDiscover={()=>setPage("Discover Information")} onAllTasks={()=>setPage("My Next Steps")} />}
       {page === "My Information" && <Dashboard dashboard={dashboard} assets={assets} onOpen={id=>{setSelectedAssetId(id);setPage("Information Details")}} />}
-      {page === "Discover Information" && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Information Details")}} />}
+      {page === "Business Landscape" && <BusinessLandscape role={me?.role} systems={systems} userEmail={userEmail} landscapeScope={landscapeScope} onDiscover={()=>setPage("Discover Information")} onRelationships={()=>setPage("Relationship Builder")} onHandoffStage={handleLandscapeHandoffStage} />}
+      {page === "Systems inventory" && <BusinessLandscape role={me?.role} systems={systems} userEmail={userEmail} landscapeScope={landscapeScope} onDiscover={()=>setPage("Discover Information")} onRelationships={()=>setPage("Relationship Builder")} onHandoffStage={handleLandscapeHandoffStage} initialTab="Systems inventory" />}
+      {page === "Relationship Builder" && <RelationshipBuilder role={me?.role} userEmail={userEmail} onBusinessLandscape={()=>setPage("Business Landscape")} />}
+      {page === "Discover Information" && canConstructLandscape && <Discover systems={systems} userEmail={userEmail} onDone={async id=>{await refresh();setSelectedAssetId(id);setPage("Information Details")}} />}
       {page === "My Next Steps" && <Inbox tasks={tasks} assets={assets} discoverySummary={discoverySummary} onDiscover={()=>setPage("Discover Information")} onGuide={task=>{
         const route=routeForTask(task);
         setSelectedAssetId(task.asset_id);
@@ -263,7 +368,7 @@ function LoginPage({onLogin,message,setMessage}){
 
   return <div className="auth-shell">
     <div className="auth-card">
-      <div className="brand">AI Data Steward</div>
+      <div className="brand"><BrandLogo /></div>
       <div className="eyebrow">Secure sign-in</div>
       <h1>Welcome back</h1>
       <p className="lead">Sign in with the account provided by your organization.</p>
@@ -273,7 +378,7 @@ function LoginPage({onLogin,message,setMessage}){
         <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></label>
         <button className="primary" disabled={busy}>{busy?"Signing in…":"Sign in"}</button>
       </form>
-      <p className="auth-help">If you cannot sign in, contact the person who administers AI Data Steward for your organization.</p>
+      <p className="auth-help">If you cannot sign in, contact the person who administers ClearPath Data for your organization.</p>
     </div>
   </div>;
 }
@@ -297,7 +402,7 @@ function ChangePasswordPage({me,minLength,onChangePassword,onLogout,message,setM
 
   return <div className="auth-shell">
     <div className="auth-card">
-      <div className="brand">AI Data Steward</div>
+      <div className="brand"><BrandLogo /></div>
       <div className="eyebrow">Account security</div>
       <h1>Change your password</h1>
       <p className="lead">{me?.user?.display_name}, choose a password you do not use for another account.</p>
@@ -314,7 +419,7 @@ function ChangePasswordPage({me,minLength,onChangePassword,onLogout,message,setM
 }
 
 
-function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTask,onInventory,onDiscover,onAllTasks}) {
+function StewardHome({role,dashboard,assets,systems,tasks,discoverySummary,onboardingKey,onTask,onInventory,onDiscover,onAllTasks,landscapeScope,onCreateLandscape,onResetLandscape}) {
   const introStorageKey=`steward_intro_complete:${onboardingKey||"unknown"}`;
   const [showIntro,setShowIntro]=useState(()=>localStorage.getItem(introStorageKey)!=="yes");
   useEffect(()=>{setShowIntro(localStorage.getItem(introStorageKey)!=="yes")},[introStorageKey]);
@@ -325,8 +430,27 @@ function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTa
   const next=now[0];
   const assetCount=assets?.length||0;
   const groundZero=Boolean(discoverySummary?.ground_zero);
+  const hasLandscapeScope = Boolean(landscapeScope);
+  const canConstruct=["STEWARD","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const isApprover=role==="APPROVER";
+  const isAdmin=["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const landscapeName = landscapeScope?.title || landscapeScope?.context_snapshot?.landscape_name || "Your landscape";
   const qualityTasks=work.filter(t=>t.source_type==="QUALITY_ISSUE").length;
   const governanceTasks=work.filter(t=>t.source_type!=="QUALITY_ISSUE").length;
+  const groundZeroMilestones=[
+    {title:"1. Scope", body:"Define the business area and what you are trying to map."},
+    {title:"2. Business layer", body:"Capture business functions, concepts, and processes."},
+    {title:"3. Systems", body:"Identify the tools and applications that support the work."},
+    {title:"4. Relationships", body:"Connect business activities to systems and information."},
+    {title:"5. Validate", body:"Check completeness and continue to the next stewardship step."},
+  ];
+  const progressMilestones = [
+    {title:"Scope", complete: assetCount > 0 || Boolean(discoverySummary?.ground_zero), hint:"Start with a known business area or source."},
+    {title:"Business layer", complete: assetCount > 0, hint:"Capture the business concepts and work being supported."},
+    {title:"Systems", complete: (systems||[]).length > 0, hint:"Add the tools and applications that support the work."},
+    {title:"Relationships", complete: (assets||[]).some(a => (a.resources||[]).length > 0 || (a.asset?.business_owner || a.asset?.data_steward)), hint:"Connect business meaning to the places where the information lives."},
+    {title:"Validate", complete: Boolean(dashboard?.average_governance_readiness && dashboard.average_governance_readiness >= 25), hint:"Confirm completeness and move to stewardship status."},
+  ];
 
   const responsibilities=[
     ["Understand","Know what information exists, what it means, where it lives, and who is responsible."],
@@ -335,6 +459,11 @@ function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTa
     ["Maintain","Keep information current as systems, policies, quality, and business needs change."],
     ["Publish","Help information move to approval and publication when it is ready."]
   ];
+
+  if (!hasLandscapeScope) {
+    if(!canConstruct) return <section className="panel ground-zero-panel"><div className="eyebrow">Landscape governance</div><h1>No landscape is ready for review</h1><p className="lead">A steward must establish the business scope before readiness and governance review can begin.</p></section>;
+    return <LandscapeScopeStart onCreateLandscape={onCreateLandscape} onDiscover={onDiscover} showIntro={showIntro} setShowIntro={setShowIntro} introStorageKey={introStorageKey} />;
+  }
 
   if (groundZero) {
     return <>
@@ -355,12 +484,28 @@ function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTa
           <div><b>Why this comes first</b><span>AI Data Steward helps you organize business knowledge into a shared landscape before you move into ownership, trust, and governance decisions.</span></div>
           <div><b>What to do next</b><span>Describe one familiar place your team uses to do work. We will turn that starting point into a candidate landscape record and guide the next question.</span></div>
         </div>
+        <div className="ground-zero-roadmap">
+          {groundZeroMilestones.map((milestone, index)=><div key={milestone.title} className="ground-zero-roadmap-item">
+            <span>{index + 1}</span>
+            <div>
+              <b>{milestone.title}</b>
+              <small>{milestone.body}</small>
+            </div>
+          </div>)}
+        </div>
+        <div className="next-milestones">
+          <div className="next-milestone"><span>1</span><div><b>Confirm the official source</b><small>Decide which location the organization should rely on when versions differ.</small></div></div>
+          <div className="next-milestone"><span>2</span><div><b>Clarify business meaning</b><small>Describe what the information helps the team do and who it supports.</small></div></div>
+          <div className="next-milestone"><span>3</span><div><b>Review trust and readiness</b><small>Check quality findings, owner context, and readiness before publishing.</small></div></div>
+        </div>
+        <div className="education strong"><b>What happens next</b><p>Once one familiar source is identified, the app will guide you from a working record into a more trusted, governed definition and then into review or publication.</p></div>
         <div className="button-row"><button className="primary" onClick={onDiscover}>Start discovering my landscape</button><button onClick={()=>setShowIntro(true)}>What is my role?</button></div>
       </section>
     </>;
   }
 
   return <>
+    {(isApprover||isAdmin)&&<section className="education strong role-landscape-guidance"><b>{isApprover?"Governance and readiness view":"Landscape health and oversight"}</b><p>{isApprover?"Review completeness, relationships, and submitted governance evidence. Landscape construction remains with the steward.":"Monitor completeness and unresolved gaps across the organization. Administrators may intervene when needed, but accountable stewards should normally maintain the business map."}</p></section>}
     {showIntro&&<section className="welcome-panel">
       <div className="eyebrow">New to data stewardship?</div>
       <h1>You do not need to be a governance expert.</h1>
@@ -371,9 +516,48 @@ function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTa
     </section>}
 
     <div className="steward-home-head">
-      <div><div className="eyebrow">Steward Home</div><h1>What needs your attention</h1><p className="lead">Work the highest-value item first. When you are unsure, choose “I’m not sure” rather than guessing.</p></div>
+      <div><div className="eyebrow">Steward Home</div><h1>{hasLandscapeScope ? "What needs your attention" : "Tell us about the work you support"}</h1><p className="lead">{hasLandscapeScope ? "Work the highest-value item first. When you are unsure, choose “I’m not sure” rather than guessing." : "Start with a program, service, or responsibility you already know. We will guide you from there."}</p></div>
       <button onClick={()=>setShowIntro(true)}>What is my role?</button>
     </div>
+
+    {hasLandscapeScope && <section className="panel landscape-scope-panel">
+      <div className="eyebrow">Current area of work</div>
+      <div className="scope-header-row">
+        <div>
+          <h2>{landscapeName}</h2>
+          <p className="lead">{landscapeScope?.context_snapshot?.business_domain || "Business domain not yet recorded"} · {landscapeScope?.context_snapshot?.steward_owner || "Steward owner pending"}</p>
+        </div>
+        {canConstruct&&<button onClick={onResetLandscape}>Map another area of work</button>}
+      </div>
+      <p>{landscapeScope?.context_snapshot?.purpose || "Describe the purpose or use case for this landscape so the work remains grounded in business intent."}</p>
+    </section>}
+
+    {(assetCount > 0 || groundZero) && <section className="panel ground-zero-panel">
+      <div className="eyebrow">Landscape build progress</div>
+      <h2>Milestones for your data landscape</h2>
+      <p className="lead">Use this as your working checklist. The goal is to move from a familiar source to a connected, useful business view, then continue into stewardship.</p>
+      <div className="ground-zero-roadmap">
+        {progressMilestones.map((milestone,index)=><div key={milestone.title} className={milestone.complete ? "ground-zero-roadmap-item active" : "ground-zero-roadmap-item"}>
+          <span>{index + 1}</span>
+          <div>
+            <b>{milestone.title}</b>
+            <small>{milestone.complete ? "Complete" : milestone.hint}</small>
+          </div>
+        </div>)}
+      </div>
+      <div className="button-row">{canConstruct?<button className="primary" onClick={onDiscover}>Continue building my landscape</button>:<button className="primary" onClick={onInventory}>Review governed information</button>}</div>
+    </section>}
+
+    {assetCount > 0 && <section className="panel journey-bridge">
+      <div className="eyebrow">From discovery to stewardship</div>
+      <h2>Your first landscape record is in motion.</h2>
+      <p className="lead">The next steps are intentional: confirm the official source, define the business meaning, and review the trust signals before anyone treats this as a trusted asset.</p>
+      <div className="journey-next-list">
+        <div><span>1</span><div><b>Pick the official source</b><small>Choose the location the organization should rely on when versions differ.</small></div></div>
+        <div><span>2</span><div><b>Clarify the business meaning</b><small>Describe what the information helps the team do and who it supports.</small></div></div>
+        <div><span>3</span><div><b>Review trust and readiness</b><small>Check quality findings, ownership, and whether it is ready to be shared.</small></div></div>
+      </div>
+    </section>}
 
     <NextStepCallout title="What to do next" body={groundZero ? "Start with one familiar system, screen, file, folder, report, or email flow and identify the business information it contains." : "Work from the top of the list and resolve the highest-priority item before moving to the next one."} />
 
@@ -423,6 +607,51 @@ function StewardHome({dashboard,assets,tasks,discoverySummary,onboardingKey,onTa
   </>;
 }
 
+function LandscapeScopeStart({onCreateLandscape,onDiscover,showIntro,setShowIntro,introStorageKey}) {
+  const [name,setName]=useState("");
+  const [businessDomain,setBusinessDomain]=useState("");
+  const [stewardOwner,setStewardOwner]=useState("");
+  const [purpose,setPurpose]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  async function submit(e){
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      await onCreateLandscape({ name, businessDomain, stewardOwner, purpose });
+      localStorage.setItem(introStorageKey, "yes");
+      setShowIntro(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="panel ground-zero-panel">
+    <div className="eyebrow">Getting started</div>
+    <h1>Tell us about the work you support</h1>
+    <p className="lead">Think of a program, service, or responsibility your team handles. You do not need to know where every file lives or understand technical systems yet.</p>
+    <div className="ground-zero-options">
+      <div><b>What happens next</b><span>We will turn what you enter into a working map and ask simple questions about the people, information, and tools involved.</span></div>
+      <div><b>It is fine not to know everything</b><span>Start with what is familiar. You can mark uncertain details and return to them later.</span></div>
+    </div>
+    <form className="landscape-form" onSubmit={submit}>
+      <div className="two-col compact">
+        <label>What should we call this area of work?<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., Professional licensing" required /></label>
+        <label>Which team or program does it belong to?<input value={businessDomain} onChange={e=>setBusinessDomain(e.target.value)} placeholder="e.g., Licensing, Finance, Child welfare" /></label>
+      </div>
+      <div className="two-col compact">
+        <label>Who can help keep this information current?<input value={stewardOwner} onChange={e=>setStewardOwner(e.target.value)} placeholder="A person, role, or team is fine" /></label>
+        <label>What does this work help people accomplish?<textarea rows="3" value={purpose} onChange={e=>setPurpose(e.target.value)} placeholder="For example: Review applications and issue professional licenses." /></label>
+      </div>
+      <div className="button-row">
+        <button type="button" onClick={onDiscover}>Start with information I know</button>
+        <button className="primary" type="submit" disabled={busy || !name.trim()}>{busy ? "Starting…" : "Start with this work"}</button>
+      </div>
+    </form>
+  </section>;
+}
+
 function Dashboard({dashboard, assets, onOpen}) {
   if (!dashboard) return <p>Loading...</p>;
   return <>
@@ -457,6 +686,547 @@ function Inbox({tasks, assets, discoverySummary, onDiscover, onGuide}) {
       <div className="two-col compact"><div><b>Why this matters</b><p>{isQuality?"The quality check found patterns that need a steward's review. They are observations, not automatic errors.":t.why_it_matters}</p></div><div><b>Recommended next step</b><p>{isQuality?"Open the findings workbench, start with the first item marked Needs review, and work through the findings one at a time.":t.recommended_action}</p></div></div>
       <button className="primary" onClick={()=>onGuide(t)}>{isQuality?"Review findings":"Start guided task"}</button>
     </div>})}
+  </>;
+}
+
+function BusinessLandscape({role,systems,userEmail,landscapeScope,onDiscover,onRelationships,onHandoffStage,initialTab="Business functions"}) {
+  const tabs=["Business functions","Business concepts","Business processes","Departments & units","Systems inventory"];
+  const systemTypes=[
+    ["APPLICATION","Application"],
+    ["REPOSITORY","Repository"],
+    ["REPORTING_TOOL","Reporting tool"],
+    ["INTEGRATION","Integration"],
+    ["EXTERNAL_SYSTEM","External system"],
+    ["OTHER","Other"],
+    ["UNKNOWN","Not sure yet"],
+  ];
+  const systemTypePlurals={APPLICATION:"Applications",REPOSITORY:"Repositories",REPORTING_TOOL:"Reporting tools",INTEGRATION:"Integrations",EXTERNAL_SYSTEM:"External systems"};
+  const knowledgeStates=[
+    ["CONFIRMED","Known","I can identify this system with confidence."],
+    ["PARTIAL","Partly known","I know some details, but important pieces are missing."],
+    ["UNCERTAIN","Uncertain","This is a lead or possibility that still needs confirmation."],
+  ];
+  const emptySystemForm={name:"",system_type:"UNKNOWN",knowledge_status:"UNCERTAIN",known_details:"",business_purpose:"",description:"",vendor:"",system_owner:""};
+  const endpointByTab={
+    "Business functions":"/landscape/functions",
+    "Business concepts":"/landscape/concepts",
+    "Business processes":"/landscape/processes",
+    "Departments & units":"/landscape/units",
+  };
+  const fieldSets={
+    "Business functions":[
+      {name:"name",label:"Function name",required:true},
+      {name:"purpose",label:"Business outcome",type:"textarea",wide:true},
+      {name:"description",label:"Description",type:"textarea",wide:true},
+      {name:"owner",label:"Business owner"},
+    ],
+    "Business concepts":[
+      {name:"name",label:"Concept name",required:true},
+      {name:"category",label:"Category"},
+      {name:"definition",label:"Business definition",type:"textarea",wide:true},
+      {name:"description",label:"Notes",type:"textarea",wide:true},
+      {name:"owner",label:"Business owner"},
+    ],
+    "Business processes":[
+      {name:"name",label:"Process name",required:true},
+      {name:"description",label:"What happens",type:"textarea",wide:true},
+      {name:"trigger",label:"What starts it",type:"textarea",wide:true},
+      {name:"frequency",label:"How often"},
+    ],
+    "Departments & units":[
+      {name:"name",label:"Department or unit name",required:true},
+      {name:"unit_type",label:"Type",type:"select",options:[["DEPARTMENT","Department"],["DIVISION","Division"],["BUSINESS_UNIT","Business unit"],["TEAM","Team"],["OTHER","Other"]]},
+      {name:"description",label:"What this group is responsible for",type:"textarea",wide:true},
+    ],
+  };
+  const emptyForm={name:"",purpose:"",description:"",owner:"",category:"",definition:"",trigger:"",frequency:"",unit_type:"DEPARTMENT",source_function_id:"",target_function_id:""};
+  const [activeTab,setActiveTab]=useState(initialTab);
+  const [functions,setFunctions]=useState([]);
+  const [concepts,setConcepts]=useState([]);
+  const [flows,setFlows]=useState([]);
+  const [units,setUnits]=useState([]);
+  const [mappings,setMappings]=useState([]);
+  const [systemInventory,setSystemInventory]=useState([]);
+  const [completion,setCompletion]=useState(null);
+  const [savedDraft,setSavedDraft]=useState(null);
+  const [resumeAvailable,setResumeAvailable]=useState(false);
+  const [draftUpdatedAt,setDraftUpdatedAt]=useState(null);
+  const [draftReady,setDraftReady]=useState(false);
+  const [resumedDraft,setResumedDraft]=useState(false);
+  const [revisions,setRevisions]=useState([]);
+  const [handoff,setHandoff]=useState(null);
+  const [handoffBusy,setHandoffBusy]=useState(false);
+  const [form,setForm]=useState(emptyForm);
+  const [systemForm,setSystemForm]=useState(emptySystemForm);
+  const [selectedUnitId,setSelectedUnitId]=useState("");
+  const [editing,setEditing]=useState(null);
+  const [editingSystemId,setEditingSystemId]=useState(null);
+  const [showSystemForm,setShowSystemForm]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const canEdit=["STEWARD","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const isAdmin=["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+
+  async function load(includeDraft=false){
+    const requests=[
+      api("/landscape/functions",userEmail),
+      api("/landscape/concepts",userEmail),
+      api("/landscape/flows",userEmail),
+      api("/landscape/units",userEmail),
+      api("/landscape/function-unit-mappings",userEmail),
+      api("/system-inventory",userEmail),
+      api("/landscape/completion",userEmail),
+    ];
+    if(includeDraft&&canEdit) requests.push(api("/landscape/draft",userEmail));
+    const [functionItems,conceptItems,flowItems,unitItems,mappingItems,inventoryItems,completionSummary,draftResponse]=await Promise.all(requests);
+    setFunctions(functionItems);
+    setConcepts(conceptItems);
+    setFlows(flowItems);
+    setUnits(unitItems);
+    setMappings(mappingItems);
+    setSystemInventory(inventoryItems);
+    setCompletion(completionSummary);
+    if(includeDraft&&canEdit){
+      const data=draftResponse?.draft_data||{};
+      setSavedDraft(Object.keys(data).length?data:null);
+      setResumeAvailable(Object.keys(data).length>0);
+      setDraftUpdatedAt(draftResponse?.updated_at||null);
+      setRevisions(draftResponse?.revisions||[]);
+      setDraftReady(true);
+    }
+  }
+
+  useEffect(()=>{load(true).catch(e=>setError(e.message))},[userEmail,canEdit]);
+
+  async function createCheckpoint(label){
+    const result=await api("/landscape/draft/checkpoint",userEmail,{method:"POST",body:JSON.stringify({label})});
+    setRevisions(current=>[result.revision,...current.filter(revision=>revision.id!==result.revision.id)].slice(0,20));
+  }
+
+  async function clearServerDraft(){
+    await api("/landscape/draft",userEmail,{method:"PATCH",body:JSON.stringify({draft_data:{}})});
+    setSavedDraft(null);setResumeAvailable(false);setDraftUpdatedAt(null);setResumedDraft(false);
+  }
+
+  async function discardCurrentEntry(){
+    resetForm();resetSystemForm();
+    try{await clearServerDraft()}catch(e){setError(`Could not discard the saved draft: ${e.message}`)}
+  }
+
+  function resumeDraft(){
+    if(!savedDraft) return;
+    if(tabs.includes(savedDraft.active_tab)) setActiveTab(savedDraft.active_tab);
+    if(savedDraft.form) setForm({...emptyForm,...savedDraft.form});
+    if(savedDraft.system_form) setSystemForm({...emptySystemForm,...savedDraft.system_form});
+    setSelectedUnitId(savedDraft.selected_unit_id||"");
+    setEditing(savedDraft.editing_id||null);
+    setEditingSystemId(savedDraft.editing_system_id||null);
+    setShowSystemForm(Boolean(savedDraft.show_system_form));
+    setResumedDraft(true);
+    setResumeAvailable(false);
+    setSavedDraft(null);
+  }
+
+  async function restoreRevision(revision){
+    if(!window.confirm(`Restore “${revision.label}”? Current landscape state will be checkpointed first.`)) return;
+    setBusy(true);setError("");
+    try{
+      await api(`/landscape/draft/restore/${revision.id}`,userEmail,{method:"POST"});
+      resetForm();resetSystemForm();
+      await load(true);
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  const hasBusinessFormContent=[form.name,form.purpose,form.description,form.owner,form.category,form.definition,form.trigger,form.frequency,form.source_function_id,form.target_function_id].some(value=>typeof value==="string"&&value.trim());
+  const activePartialDraft=showSystemForm||editing!==null||editingSystemId!==null||hasBusinessFormContent;
+  function currentDraftSnapshot(){
+    return {
+      active_tab:activeTab,
+      form,
+      system_form:systemForm,
+      selected_unit_id:selectedUnitId,
+      editing_id:editing,
+      editing_system_id:editingSystemId,
+      show_system_form:showSystemForm,
+    };
+  }
+  async function persistPartialDraft(event){
+    if(event?.currentTarget?.contains(event.relatedTarget)||!activePartialDraft) return;
+    const draftData=currentDraftSnapshot();
+    try{
+      const result=await api("/landscape/draft",userEmail,{method:"PATCH",body:JSON.stringify({draft_data:draftData})});
+      setDraftUpdatedAt(result.updated_at);setSavedDraft(draftData);setResumeAvailable(true);
+    }catch(e){setError(`Draft autosave failed: ${e.message}`)}
+  }
+  function changeLandscapeTab(tab){
+    if(activePartialDraft) persistPartialDraft();
+    resetForm();resetSystemForm();setActiveTab(tab);setError("");
+  }
+  useEffect(()=>{
+    if(!draftReady||!activePartialDraft) return;
+    const draftData=currentDraftSnapshot();
+    const timer=setTimeout(()=>{
+      api("/landscape/draft",userEmail,{method:"PATCH",body:JSON.stringify({draft_data:draftData})})
+        .then(result=>{setDraftUpdatedAt(result.updated_at);setSavedDraft(draftData)})
+        .catch(e=>setError(`Draft autosave failed: ${e.message}`));
+    },450);
+    return ()=>clearTimeout(timer);
+  },[activeTab,form,systemForm,selectedUnitId,editing,editingSystemId,showSystemForm,draftReady,userEmail]);
+
+  const businessCount=functions.length+concepts.length+flows.length+units.length;
+  const unconfirmedSystems=systemInventory.filter(item=>item.knowledge_status!=="CONFIRMED").length;
+  const readinessLabel=completion?.state==="READY_TO_PROCEED"?"Ready to proceed":completion?.state==="NOT_STARTED"?"Not started":"In progress";
+  const primaryGuidance=completion?.guidance?.filter(item=>item.severity!=="SUCCESS")||[];
+  async function prepareLandscapeHandoff(){
+    setHandoffBusy(true);setError("");
+    try{setHandoff(await api("/landscape/handoff",userEmail,{method:"POST"}))}
+    catch(e){setError(e.message)}finally{setHandoffBusy(false)}
+  }
+  const activeRecords=activeTab==="Business functions"?functions:activeTab==="Business concepts"?concepts:activeTab==="Business processes"?flows:units;
+  const pluralLabel=activeTab==="Business functions"?"functions":activeTab==="Business concepts"?"concepts":activeTab==="Business processes"?"processes":"departments and units";
+  const functionsById=Object.fromEntries(functions.map(item=>[item.id,item.name]));
+
+  function resetForm(){setForm(emptyForm);setEditing(null);setSelectedUnitId("")}
+
+  function resetSystemForm(){setSystemForm(emptySystemForm);setEditingSystemId(null);setShowSystemForm(false)}
+
+  function editSystem(item){
+    setSystemForm({
+      ...emptySystemForm,
+      ...item,
+      knowledge_status:item.knowledge_status==="UNASSESSED"?"UNCERTAIN":item.knowledge_status,
+    });
+    setEditingSystemId(item.system_id);
+    setShowSystemForm(true);
+  }
+
+  async function saveSystem(e){
+    e.preventDefault();
+    setBusy(true);setError("");
+    try{
+      await createCheckpoint(editingSystemId?"Before editing a system inventory item":"Before adding a system inventory item");
+      await api(editingSystemId?`/system-inventory/${editingSystemId}`:"/system-inventory",userEmail,{
+        method:editingSystemId?"PATCH":"POST",
+        body:JSON.stringify(systemForm),
+      });
+      resetSystemForm();
+      await clearServerDraft();
+      await load();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function deleteSystem(item){
+    if(!window.confirm(`Delete “${item.name}” from the systems inventory? Resource records will remain but become unlinked.`)) return;
+    setBusy(true);setError("");
+    try{
+      await createCheckpoint(`Before deleting system ${item.name}`);
+      await api(`/system-inventory/${item.system_id}`,userEmail,{method:"DELETE"});
+      if(editingSystemId===item.system_id){resetSystemForm();await clearServerDraft()}
+      await load();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  function beginEdit(item){
+    setEditing(item.id);
+    setForm({...emptyForm,...item,source_function_id:item.source_function_id||"",target_function_id:item.target_function_id||""});
+    if(activeTab==="Business functions"){
+      setSelectedUnitId(String(mappings.find(mapping=>mapping.function_id===item.id)?.unit_id||""));
+    }
+  }
+
+  async function save(e){
+    e.preventDefault();
+    const path=endpointByTab[activeTab];
+    if(!path) return;
+    const payload={...form};
+    if(activeTab==="Business processes"){
+      payload.source_function_id=payload.source_function_id?Number(payload.source_function_id):null;
+      payload.target_function_id=payload.target_function_id?Number(payload.target_function_id):null;
+    }
+    setBusy(true);setError("");
+    try{
+      await createCheckpoint(editing?`Before editing ${activeTab.toLowerCase()}`:`Before adding ${activeTab.toLowerCase()}`);
+      const saved=await api(editing?`${path}/${editing}`:path,userEmail,{method:editing?"PATCH":"POST",body:JSON.stringify(payload)});
+      if(activeTab==="Business functions"){
+        const currentMappings=mappings.filter(mapping=>mapping.function_id===saved.id);
+        for(const mapping of currentMappings) await api(`/landscape/function-unit-mappings/${mapping.id}`,userEmail,{method:"DELETE"});
+        if(selectedUnitId) await api("/landscape/function-unit-mappings",userEmail,{method:"POST",body:JSON.stringify({function_id:saved.id,unit_id:Number(selectedUnitId)})});
+      }
+      resetForm();
+      await clearServerDraft();
+      await load();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function remove(item){
+    const path=endpointByTab[activeTab];
+    if(!path||!window.confirm(`Delete “${item.name}”?`)) return;
+    setBusy(true);setError("");
+    try{await createCheckpoint(`Before deleting ${item.name}`);await api(`${path}/${item.id}`,userEmail,{method:"DELETE"});await load();if(editing===item.id){resetForm();await clearServerDraft()}}
+    catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function removeMapping(mapping){
+    setBusy(true);setError("");
+    try{await createCheckpoint("Before changing department mappings");await api(`/landscape/function-unit-mappings/${mapping.id}`,userEmail,{method:"DELETE"});await load()}
+    catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  function recordDetail(item){
+    if(activeTab==="Business functions"){
+      const mapped=mappings.filter(mapping=>mapping.function_id===item.id).map(mapping=>units.find(unit=>unit.id===mapping.unit_id)?.name).filter(Boolean);
+      return <>{item.purpose&&<p>{item.purpose}</p>}<small>{item.owner||"Owner not recorded"}{mapped.length?` · ${mapped.join(", ")}`:" · No department or unit mapped"}</small></>;
+    }
+    if(activeTab==="Business concepts") return <>{item.definition&&<p>{item.definition}</p>}<small>{item.category||"Business concept"}{item.owner?` · ${item.owner}`:""}</small></>;
+    if(activeTab==="Business processes") return <>{item.description&&<p>{item.description}</p>}<small>{item.frequency||"Frequency not recorded"}{item.source_function_id?` · ${functionsById[item.source_function_id]||"Function"}`:""}{item.target_function_id?` → ${functionsById[item.target_function_id]||"Function"}`:""}</small></>;
+    return <><p>{item.description||"Responsibility description not recorded."}</p><small>{item.unit_type.replaceAll("_"," ")}</small></>;
+  }
+
+  return <>
+    <div className="business-landscape-head">
+      <div><div className="eyebrow">Ground Zero · {activeTab==="Systems inventory"?"Systems layer":"Business map"}</div><h1>{activeTab==="Systems inventory"?"Systems inventory":landscapeScope?.title||"Business Landscape"}</h1><p className="lead">{activeTab==="Systems inventory"?"Record the applications and technical connections that support business work. Uncertain or incomplete details can stay clearly marked for follow-up.":"Map the work, shared language, and accountable groups first. These are business items, separate from the software and technical sources that support them."}</p></div>
+    </div>
+    <section className="education strong role-landscape-guidance"><b>{canEdit?(isAdmin?"Administrator oversight with intervention access":"Steward construction workspace"):"Read-only readiness and governance review"}</b><p>{canEdit?(isAdmin?"Monitor landscape health and unresolved gaps. Make changes only when administrative intervention is appropriate.":"Build the business and systems layers, map relationships, and resolve the gaps shown below."):"Review completeness, gaps, and governance connections. An assigned steward or administrator must make changes."}</p></section>
+    {resumeAvailable&&savedDraft&&<section className="resume-draft-banner"><div><div className="eyebrow">Saved unfinished work</div><b>{savedDraft.form?.name||savedDraft.system_form?.name||"Landscape entry in progress"}</b><span>{draftUpdatedAt?`Last saved ${new Date(draftUpdatedAt).toLocaleString()}`:"Saved for resuming"}</span></div><div className="button-row"><button type="button" onClick={()=>clearServerDraft().catch(e=>setError(e.message))}>Discard draft</button><button type="button" className="primary" onClick={resumeDraft}>Resume</button></div></section>}
+    <div className="business-counts">
+      <div><strong>{businessCount}</strong><span>Business items mapped</span></div>
+      <div><strong>{functions.length}</strong><span>Functions</span></div>
+      <div><strong>{concepts.length}</strong><span>Concepts</span></div>
+      <div><strong>{flows.length}</strong><span>Processes</span></div>
+      <div><strong>{units.length}</strong><span>Departments & units</span></div>
+      <div className="technical-count"><strong>{systemInventory.length}</strong><span>Technical systems</span></div>
+    </div>
+    {completion&&<section className={`landscape-completion state-${completion.state.toLowerCase()}`}>
+      <div className="completion-score-block"><div className="eyebrow">Landscape completeness</div><strong>{completion.completeness_score}%</strong><span>{readinessLabel} · {completion.checks_complete} of {completion.checks_total} checks</span><div className="completion-progress"><i style={{width:`${completion.completeness_score}%`}} /></div></div>
+      <div className="completion-guidance-block"><div className="completion-guidance-heading"><div><div className="eyebrow">What needs attention</div><h2>{completion.ready_to_proceed?"Core landscape is connected":"Build out the landscape"}</h2></div>{onRelationships&&<button type="button" onClick={onRelationships}>Review connections</button>}</div>
+        {primaryGuidance.length===0?<p className="completion-clear">{completion.guidance?.[0]?.message||"The landscape is ready to proceed."}</p>:<ul className="completion-guidance-list">{primaryGuidance.map(item=><li key={item.code} className={`guidance-${item.severity.toLowerCase()}`}><span aria-hidden="true">{item.severity==="ACTION"?"!":"·"}</span>{item.message}</li>)}</ul>}
+        {(completion.unconnected_systems?.length>0||completion.duplicate_concepts?.length>0||completion.incomplete_functions?.length>0)&&<details className="completion-details"><summary>See the specific items</summary>
+          {completion.unconnected_systems?.length>0&&<p><b>Unconnected systems:</b> {completion.unconnected_systems.map(item=>item.name).join(", ")}</p>}
+          {completion.incomplete_functions?.length>0&&<p><b>Functions to clarify:</b> {completion.incomplete_functions.map(item=>`${item.name} (${item.missing.join(" and ")})`).join(", ")}</p>}
+          {completion.duplicate_concepts?.length>0&&<p><b>Possible duplicate concepts:</b> {completion.duplicate_concepts.map(group=>group.items.map(item=>item.name).join(" / ")).join("; ")}</p>}
+        </details>}
+      </div>
+    </section>}
+    {completion?.ready_to_proceed&&<section className="landscape-ready-handoff">
+      <div className="landscape-ready-heading"><div><div className="eyebrow">Ground Zero complete · Stewardship begins</div><h2>Landscape ready for next step</h2><p>The business scope is connected to its systems. Continue into the asset-level stewardship workflow; later review and approval remain explicit human decisions.</p></div>{!handoff&&<button type="button" className="primary" onClick={prepareLandscapeHandoff} disabled={handoffBusy}>{handoffBusy?"Preparing…":canEdit?"Create next-step tasks":"Review workflow readiness"}</button>}</div>
+      {handoff&&<>
+        {handoff.created_task_ids?.length>0&&<div className="handoff-created-note">Created {handoff.created_task_ids.length} next-step task{handoff.created_task_ids.length===1?"":"s"} from current asset readiness.</div>}
+        {handoff.next_stage&&(canEdit||handoff.next_stage.key==="approval")&&<div className="handoff-next-action"><div><div className="eyebrow">Recommended next step</div><b>{handoff.next_stage.label}</b><small>{handoff.next_stage.asset_name||"Start by identifying an information asset."}</small></div><button type="button" className="primary" onClick={()=>onHandoffStage?.(handoff.next_stage)}>{handoff.next_stage.page==="Review Queue"?"Open review queue":handoff.next_stage.page==="Discover Information"?"Identify information":handoff.next_stage.tab==="Share & Publish"?"Prepare approval":"Continue"}</button></div>}
+        <div className="handoff-stage-list">{handoff.stages.map((stage,index)=>{
+          const stageLabels={understanding:"Understanding",official_source:"Official source review",quality:"Quality assessment",approval:"Approval"};
+          const statusLabels={ACTION_REQUIRED:"Action required",REVIEW_REQUIRED:"Review required",READY:"Ready",BLOCKED:"Complete earlier stewardship first",IN_REVIEW:"In review",WAITING_FOR_SUBMISSION:"Waiting for steward submission",WAITING_FOR_INFORMATION:"Needs an information asset",COMPLETE:"Complete"};
+          const routeable=Boolean((canEdit||stage.key==="approval")&&(stage.asset_id||stage.page==="Review Queue"||stage.page==="Discover Information"));
+          const isBlocked=stage.status==="BLOCKED"||stage.status==="WAITING_FOR_INFORMATION";
+          return <article className={`handoff-stage ${stage.status.toLowerCase()}`} key={stage.key}>
+            <span className="handoff-stage-number">{index+1}</span>
+            <div className="handoff-stage-copy"><b>{stageLabels[stage.key]||stage.label}</b><small>{stage.asset_name?`${stage.asset_name} · `:""}{statusLabels[stage.status]||stage.status}{stage.task_count?` · ${stage.task_count} task${stage.task_count===1?"":"s"}`:""}</small></div>
+            <button type="button" disabled={!routeable||isBlocked} onClick={()=>onHandoffStage?.(stage)}>{stage.page==="Review Queue"?"Open review queue":stage.page==="Discover Information"?"Identify information":stage.key==="approval"?"Prepare approval":"Open stage"}</button>
+          </article>;
+        })}</div>
+      </>}
+    </section>}
+    {canEdit&&revisions.length>0&&<details className="landscape-revision-history"><summary>Restore a previous landscape version <span>{revisions.length} saved</span></summary><div className="revision-list">{revisions.map(revision=><div className="revision-row" key={revision.id}><div><b>{revision.label}</b><small>{new Date(revision.created_at).toLocaleString()}</small></div><button type="button" disabled={busy} onClick={()=>restoreRevision(revision)}>Restore</button></div>)}</div></details>}
+    <div className="education strong business-why"><b>Why this matters</b><p>Business functions describe what your organization does; concepts describe the terms it shares; processes describe how work moves. Mapping them to a department or unit makes ownership visible before you connect any technical system.</p></div>
+    {error&&<div className="message message-error" role="alert">{error}</div>}
+    <div className="tabs business-tabs" role="tablist" aria-label="Landscape item type">
+      {tabs.map(tab=><button key={tab} role="tab" aria-selected={activeTab===tab} className={activeTab===tab?"tab active":"tab"} onClick={()=>changeLandscapeTab(tab)}>{tab}</button>)}
+    </div>
+    {activeTab==="Systems inventory"?<section className="panel technical-landscape-panel systems-inventory-panel">
+      <div className="eyebrow">Ground Zero · Systems layer</div>
+      <div className="inventory-title-row"><div><h2>Systems inventory</h2><p className="lead">{canEdit?"Record the applications and technical connections that support business work. You can add an item before every detail is known.":"Review the applications and technical connections recorded by the steward."}</p></div>{canEdit&&<button className="primary" onClick={()=>{setSystemForm(emptySystemForm);setEditingSystemId(null);setShowSystemForm(true)}}>Add a system</button>}</div>
+      <div className="inventory-guidance"><b>Uncertainty is useful information.</b><span>Mark what is confirmed, what is only partly known, or what still needs checking. Nothing here is treated as verified just because it was entered.</span></div>
+      <div className="system-inventory-counts">
+        {systemTypes.slice(0,5).map(([type])=><div key={type}><strong>{systemInventory.filter(item=>item.system_type===type).length}</strong><span>{systemTypePlurals[type]}</span></div>)}
+        <div className="needs-confirmation"><strong>{unconfirmedSystems}</strong><span>Need confirmation</span></div>
+      </div>
+      {canEdit&&showSystemForm&&<form className="inventory-form" onSubmit={saveSystem} onBlurCapture={persistPartialDraft}>
+        <div className="task-head"><div><div className="eyebrow">{editingSystemId?"Update inventory":"New inventory item"}</div><h3>{editingSystemId?"What do you know about this system?":"What system or connection have you encountered?"}</h3></div><button type="button" aria-label="Close system form" onClick={resetSystemForm}>Close</button></div>
+        <p className="business-guidance">A familiar name, shorthand, or “not yet identified” label is enough to start. You do not need a technical identifier.</p>
+        <label>System name or working label<input required value={systemForm.name} onChange={e=>setSystemForm(current=>({...current,name:e.target.value}))} placeholder="e.g., GitLab repository, partner portal (name unknown)" /></label>
+        <div className="inventory-field-label">What kind of system is it?</div>
+        <div className="system-type-choices">{systemTypes.map(([type,label])=><button type="button" key={type} className={systemForm.system_type===type?"system-type-choice selected":"system-type-choice"} aria-pressed={systemForm.system_type===type} onClick={()=>setSystemForm(current=>({...current,system_type:type}))}>{label}</button>)}</div>
+        <div className="inventory-field-label">How certain are you?</div>
+        <div className="knowledge-choices">{knowledgeStates.map(([status,label,help])=><button type="button" key={status} aria-pressed={systemForm.knowledge_status===status} className={systemForm.knowledge_status===status?"knowledge-choice selected":"knowledge-choice"} onClick={()=>setSystemForm(current=>({...current,knowledge_status:status}))}><b>{label}</b><span>{help}</span></button>)}</div>
+        <div className="form-grid inventory-details-grid">
+          <label>What is it used for?<textarea rows="3" value={systemForm.business_purpose||""} onChange={e=>setSystemForm(current=>({...current,business_purpose:e.target.value}))} placeholder="Describe the business work it may support." /></label>
+          <label>What do you know or need to confirm?<textarea rows="3" value={systemForm.known_details||""} onChange={e=>setSystemForm(current=>({...current,known_details:e.target.value}))} placeholder="For example: The team uses it for source code; owner and hosting are not yet known." /></label>
+          <label>Vendor or provider<input value={systemForm.vendor||""} onChange={e=>setSystemForm(current=>({...current,vendor:e.target.value}))} placeholder="Optional" /></label>
+          <label>Owner or contact<input value={systemForm.system_owner||""} onChange={e=>setSystemForm(current=>({...current,system_owner:e.target.value}))} placeholder="Optional" /></label>
+          <label className="wide">Additional description<textarea rows="2" value={systemForm.description||""} onChange={e=>setSystemForm(current=>({...current,description:e.target.value}))} placeholder="Optional context" /></label>
+        </div>
+        <div className="button-row"><button type="button" onClick={resetSystemForm}>Cancel</button><button className="primary" type="submit" disabled={busy||!systemForm.name.trim()}>{busy?"Saving…":editingSystemId?"Save inventory details":"Add to systems inventory"}</button></div>
+      </form>}
+      {systemInventory.length===0?<EmptyState title="No systems recorded yet." text="Add a known system, a partly known connection, or an uncertain lead. Business functions and systems stay in separate layers."/>:<div className="business-record-list inventory-record-list">{systemInventory.map(item=>{
+        const typeLabel=systemTypes.find(([type])=>type===item.system_type)?.[1]||"System type unknown";
+        const stateLabel=item.knowledge_status==="CONFIRMED"?"Confirmed":item.knowledge_status==="PARTIAL"?"Partly known":item.knowledge_status==="UNCERTAIN"?"Uncertain":"Needs inventory";
+        return <article className={`business-record technical-record inventory-record knowledge-${(item.knowledge_status||"unassessed").toLowerCase()}`} key={item.system_id}>
+          <div><div className="inventory-record-meta"><span className="system-type-badge">{typeLabel}</span><span className="knowledge-badge">{stateLabel}</span></div><h3>{item.name}</h3><p>{item.business_purpose||"Business purpose not recorded yet."}</p>{item.known_details&&<div className="known-detail-note"><b>{item.knowledge_status==="CONFIRMED"?"Inventory note":"Known so far / to confirm"}</b><span>{item.known_details}</span></div>}<small>{item.vendor||"Provider not recorded"}{item.system_owner?` · ${item.system_owner}`:""}</small></div>
+          {canEdit&&<div className="record-actions"><button type="button" onClick={()=>editSystem(item)}>{item.knowledge_status==="UNASSESSED"?"Complete inventory":"Edit"}</button><button type="button" className="danger-button" onClick={()=>deleteSystem(item)}>Delete</button></div>}
+        </article>;
+      })}</div>}
+    </section>:<div className={canEdit?"business-work-area":"business-work-area read-only-landscape"}>
+      {canEdit&&<section className="panel business-editor">
+        <div className="eyebrow">{editing?"Edit":"Add"} · {activeTab}</div>
+        <h2>{editing?"Update this business item":`Add ${activeTab.toLowerCase()}`}</h2>
+        <p className="business-guidance">{activeTab==="Business functions"?"Start with an outcome or responsibility the organization performs, not an application name.":activeTab==="Business concepts"?"Use a term that business people share and can recognize across teams.":activeTab==="Business processes"?"Describe the work from its trigger through its outcome, in the language the team uses.":"Capture who the group is and what it is accountable for; you can map functions to it."}</p>
+        <form className="form-grid business-form" onSubmit={save} onBlurCapture={persistPartialDraft}>
+          {fieldSets[activeTab].map(field=><label key={field.name} className={field.wide?"wide":""}>{field.label}{field.type==="textarea"?<textarea rows="3" value={form[field.name]||""} required={field.required} onChange={e=>setForm(current=>({...current,[field.name]:e.target.value}))}/>:field.type==="select"?<select value={form[field.name]||""} onChange={e=>setForm(current=>({...current,[field.name]:e.target.value}))}>{field.options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>:<input value={form[field.name]||""} required={field.required} onChange={e=>setForm(current=>({...current,[field.name]:e.target.value}))}/>}</label>)}
+          {activeTab==="Business functions"&&<label className="wide">Department or unit<select value={selectedUnitId} onChange={e=>setSelectedUnitId(e.target.value)}><option value="">Not mapped yet</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>}
+          {activeTab==="Business processes"&&<><label>Starts in function<select value={form.source_function_id||""} onChange={e=>setForm(current=>({...current,source_function_id:e.target.value}))}><option value="">Not linked</option>{functions.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Moves to function<select value={form.target_function_id||""} onChange={e=>setForm(current=>({...current,target_function_id:e.target.value}))}><option value="">Not linked</option>{functions.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}
+          <div className="button-row wide"><button type="button" onClick={discardCurrentEntry} disabled={!editing&&!form.name&&!hasBusinessFormContent}>Clear</button><button type="submit" className="primary" disabled={busy||!form.name.trim()}>{busy?"Saving…":editing?"Save changes":"Add to business map"}</button></div>
+        </form>
+      </section>}
+      <section className="panel business-records-panel">
+        <div className="task-head"><div><div className="eyebrow">Running count · {pluralLabel}</div><h2>{activeRecords.length} {pluralLabel}</h2></div></div>
+        {activeRecords.length===0?<EmptyState title={`No ${pluralLabel} mapped yet.`} text={canEdit?"Add a first item using plain business language. A rough starting point is fine; you can refine it as you learn more.":"No records are available for governance review."}/>:<div className="business-record-list">{activeRecords.map(item=><article className="business-record" key={item.id}><div><h3>{item.name}</h3>{recordDetail(item)}{activeTab==="Business functions"&&mappings.filter(mapping=>mapping.function_id===item.id).map(mapping=>canEdit?<button type="button" className="mapping-chip" key={mapping.id} title="Remove department or unit mapping" onClick={()=>removeMapping(mapping)}>{units.find(unit=>unit.id===mapping.unit_id)?.name||"Mapped unit"} ×</button>:<span className="mapping-chip" key={mapping.id}>{units.find(unit=>unit.id===mapping.unit_id)?.name||"Mapped unit"}</span>)}</div>{canEdit&&<div className="record-actions"><button type="button" onClick={()=>beginEdit(item)}>Edit</button><button type="button" className="danger-button" onClick={()=>remove(item)}>Delete</button></div>}</article>)}</div>}
+      </section>
+    </div>}
+  </>;
+}
+
+function RelationshipBuilder({role,userEmail,onBusinessLandscape}) {
+  const relationshipKinds=[
+    {value:"SUPPORTS",label:"Connect work to a system",description:"Show which system helps people perform a business responsibility.",source:"BUSINESS_FUNCTION",target:"SYSTEM",sourceQuestion:"What work does the team do?",targetQuestion:"Which system helps with this work?"},
+    {value:"DESCRIBES",label:"Connect a business term to information",description:"Show where a familiar business idea appears as managed information.",source:"BUSINESS_CONCEPT",target:"ASSET",sourceQuestion:"Which business term or idea?",targetQuestion:"Which information does it describe?"},
+    {value:"OWNER",label:"Name who owns information",description:"Record the person accountable for the business use of information.",source:"ASSET",target:"PERSON",sourceQuestion:"Which information?",targetQuestion:"Who is accountable for it?"},
+    {value:"STEWARD",label:"Name who maintains information",description:"Record the person who helps keep information understood and current.",source:"ASSET",target:"PERSON",sourceQuestion:"Which information?",targetQuestion:"Who helps keep it current?"},
+    {value:"REPRESENTS",label:"Connect a system to a location",description:"Show the screen, file, report, or other location a system provides.",source:"SYSTEM",target:"RESOURCE",sourceQuestion:"Which system?",targetQuestion:"Which location does it provide?",advanced:true},
+    {value:"DEPENDS_ON",label:"Record an upstream dependency",description:"Show that one business area, system, or information item relies on another.",dynamic:true,sourceQuestion:"What depends on something else?",targetQuestion:"What does it depend on?",advanced:true},
+    {value:"PROCESS_FLOW",label:"Show how work moves",description:"Connect two business responsibilities through a defined process.",source:"BUSINESS_FUNCTION",target:"BUSINESS_FUNCTION",sourceQuestion:"Where does the work begin?",targetQuestion:"Where does it go next?",advanced:true},
+  ];
+  const entityLabels={BUSINESS_FUNCTION:"Business function",BUSINESS_CONCEPT:"Business concept",BUSINESS_PROCESS:"Business process",SYSTEM:"System",RESOURCE:"Resource",ASSET:"Information asset",PERSON:"Person"};
+  const relationshipLabels={SUPPORTS:"supports",DESCRIBES:"describes",REPRESENTS:"provides",OWNER:"owned by",STEWARD:"stewarded by",DEPENDS_ON:"depends on",PROCESS_FLOW:"flows to"};
+  const [functions,setFunctions]=useState([]);
+  const [concepts,setConcepts]=useState([]);
+  const [processes,setProcesses]=useState([]);
+  const [systems,setSystems]=useState([]);
+  const [assetRecords,setAssetRecords]=useState([]);
+  const [relationships,setRelationships]=useState([]);
+  const [relationshipType,setRelationshipType]=useState("SUPPORTS");
+  const [dependencyEntityType,setDependencyEntityType]=useState("BUSINESS_FUNCTION");
+  const [sourceId,setSourceId]=useState("");
+  const [targetId,setTargetId]=useState("");
+  const [processId,setProcessId]=useState("");
+  const [personName,setPersonName]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [notice,setNotice]=useState("");
+  const canEdit=["STEWARD","ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+  const isAdmin=["ORG_ADMIN","ENTERPRISE_ADMIN"].includes(role);
+
+  async function createCheckpoint(label){
+    await api("/landscape/draft/checkpoint",userEmail,{method:"POST",body:JSON.stringify({label})});
+  }
+
+  async function load(){
+    const [functionItems,conceptItems,processItems,systemItems,assetItems,relationshipItems]=await Promise.all([
+      api("/landscape/functions",userEmail),
+      api("/landscape/concepts",userEmail),
+      api("/landscape/processes",userEmail),
+      api("/system-inventory",userEmail),
+      api("/assets",userEmail),
+      api("/landscape/relationships",userEmail),
+    ]);
+    setFunctions(functionItems);
+    setConcepts(conceptItems);
+    setProcesses(processItems);
+    setSystems(systemItems);
+    setAssetRecords(assetItems);
+    setRelationships(relationshipItems);
+  }
+
+  useEffect(()=>{load().catch(e=>setError(e.message))},[userEmail]);
+
+  const assets=assetRecords.map(record=>record.asset);
+  const resources=assetRecords.flatMap(record=>(record.resources||[]).map(resource=>({...resource,asset_name:record.asset.name})));
+  const selectedKind=relationshipKinds.find(kind=>kind.value===relationshipType)||relationshipKinds[0];
+  const sourceType=selectedKind.dynamic?dependencyEntityType:selectedKind.source;
+  const targetType=selectedKind.dynamic?dependencyEntityType:selectedKind.target;
+
+  function optionsFor(type){
+    if(type==="BUSINESS_FUNCTION") return functions.map(item=>({id:item.id,label:item.name}));
+    if(type==="BUSINESS_CONCEPT") return concepts.map(item=>({id:item.id,label:item.name}));
+    if(type==="BUSINESS_PROCESS") return processes.map(item=>({id:item.id,label:item.name}));
+    if(type==="SYSTEM") return systems.map(item=>({id:item.system_id,label:item.name}));
+    if(type==="RESOURCE") return resources.map(item=>({id:item.resource_id,label:`${item.name}${item.asset_name?` · ${item.asset_name}`:""}`}));
+    if(type==="ASSET") return assets.map(item=>({id:item.asset_id,label:item.name}));
+    return [];
+  }
+
+  function labelFor(type,id,relationship){
+    if(type==="PERSON") return relationship?.details?.display_name||"Person not named";
+    return optionsFor(type).find(item=>String(item.id)===String(id))?.label||`${entityLabels[type]||type} not found`;
+  }
+
+  function chooseKind(value){
+    setRelationshipType(value);
+    setSourceId("");setTargetId("");setPersonName("");setProcessId("");
+    setError("");setNotice("");
+  }
+
+  async function save(e){
+    e.preventDefault();
+    setError("");setNotice("");setBusy(true);
+    const payload={
+      source_type:sourceType,
+      source_id:Number(sourceId),
+      target_type:targetType,
+      target_id:targetType==="PERSON"?null:Number(targetId),
+      relationship_type:relationshipType,
+    };
+    if(targetType==="PERSON") payload.details={display_name:personName.trim()};
+    if(relationshipType==="PROCESS_FLOW") payload.process_id=Number(processId);
+    try{
+      await createCheckpoint(`Before adding ${relationshipLabels[relationshipType]||"a relationship"} link`);
+      await api("/landscape/relationships",userEmail,{method:"POST",body:JSON.stringify(payload)});
+      setSourceId("");setTargetId("");setPersonName("");setProcessId("");
+      setNotice("Connection saved. You can add another connection or review it below.");
+      await load();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function remove(relationship){
+    setBusy(true);setError("");setNotice("");
+    try{
+      await createCheckpoint(`Before removing ${relationshipLabels[relationship.relationship_type]||"a relationship"} link`);
+      await api(`/landscape/relationships/${encodeURIComponent(relationship.id)}`,userEmail,{method:"DELETE"});
+      await load();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+
+  const readyToSave=Boolean(sourceId&&((targetType==="PERSON"&&personName.trim())||(targetType!=="PERSON"&&targetId))&&(relationshipType!=="PROCESS_FLOW"||processId));
+
+  return <>
+    <div className="relationship-page-head"><div><div className="eyebrow">How your work fits together</div><h1>Connect what you already know</h1><p className="lead">Choose a simple statement below, then fill in its two parts. You can build this picture one connection at a time.</p></div><div className="relationship-total"><strong>{relationships.length}</strong><span>Connections</span></div></div>
+    <section className="education strong role-landscape-guidance"><b>{canEdit?(isAdmin?"Relationship oversight":"Steward mapping workspace"):"Read-only governance map"}</b><p>{canEdit?(isAdmin?"Review cross-layer dependencies and intervene when an administrative correction is required.":"Add and maintain the connections that explain how business work, information, and systems fit together."):"Use these connections to evaluate ownership, dependencies, and readiness. A steward or administrator must change the map."}</p></section>
+    {error&&<div className="message message-error" role="alert">{error}</div>}
+    {notice&&<div className="message message-success" role="status">{notice}</div>}
+    {canEdit&&<section className="panel relationship-builder-panel">
+      <div className="eyebrow">Step 1</div><h2>What do you want to show?</h2>
+      <div className="relationship-kind-cards">{relationshipKinds.filter(kind=>!kind.advanced).map(kind=><button className={relationshipType===kind.value?"selected":""} type="button" key={kind.value} onClick={()=>chooseKind(kind.value)}><b>{kind.label}</b><span>{kind.description}</span></button>)}</div>
+      <details className="relationship-advanced" open={selectedKind.advanced||undefined}>
+        <summary>More connection types</summary>
+        <div className="relationship-kind-cards">{relationshipKinds.filter(kind=>kind.advanced).map(kind=><button className={relationshipType===kind.value?"selected":""} type="button" key={kind.value} onClick={()=>chooseKind(kind.value)}><b>{kind.label}</b><span>{kind.description}</span></button>)}</div>
+      </details>
+      <div className="relationship-form-heading"><div className="eyebrow">Step 2</div><h2>Complete the connection</h2><p>{selectedKind.description}</p></div>
+      <form className="relationship-form" onSubmit={save}>
+        {selectedKind.dynamic&&<label>What kind of item are you connecting?<select value={dependencyEntityType} onChange={e=>{setDependencyEntityType(e.target.value);setSourceId("");setTargetId("")}}>{[["BUSINESS_FUNCTION","Business work"],["SYSTEM","Systems"],["ASSET","Information"]].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
+        {relationshipType==="PROCESS_FLOW"&&<label>Which process connects them?<select value={processId} onChange={e=>setProcessId(e.target.value)}><option value="">Choose a process</option>{processes.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        <label>{selectedKind.sourceQuestion}<select value={sourceId} onChange={e=>setSourceId(e.target.value)}><option value="">Choose one</option>{optionsFor(sourceType).map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+        {targetType==="PERSON"?<label>{selectedKind.targetQuestion}<input value={personName} onChange={e=>setPersonName(e.target.value)} placeholder="Enter a person's name"/></label>:<label>{selectedKind.targetQuestion}<select value={targetId} onChange={e=>setTargetId(e.target.value)}><option value="">Choose one</option>{optionsFor(targetType).map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
+        <div className="relationship-sentence" aria-live="polite"><b>Your connection</b><span>{sourceId?labelFor(sourceType,sourceId):"Choose the first item"} <strong>{relationshipLabels[relationshipType]||"connects to"}</strong> {targetType==="PERSON"?(personName.trim()||"enter a person's name"):(targetId?labelFor(targetType,targetId):"choose the second item")}.</span></div>
+        <div className="relationship-form-actions"><button type="submit" className="primary" disabled={busy||!readyToSave}>{busy?"Saving…":"Save this connection"}</button></div>
+      </form>
+    </section>}
+    <section className="relationship-map-section">
+      <div className="task-head"><div><div className="eyebrow">What you have connected</div><h2>Your connections</h2></div><button onClick={onBusinessLandscape}>Add or edit the items above</button></div>
+      {relationships.length===0?<EmptyState title="No relationships have been mapped yet." text="Your first saved connection will appear here. You can add more links as the landscape becomes clearer."/>:<div className="relationship-list">{relationships.map(relationship=><article className="relationship-edge" key={`${relationship.id}:${relationship.relationship_type}`}>
+        <div className="relationship-node"><small>{entityLabels[relationship.source_type]||relationship.source_type}</small><b>{labelFor(relationship.source_type,relationship.source_id,relationship)}</b></div>
+        <div className="relationship-connector"><span>{relationshipLabels[relationship.relationship_type]||relationship.relationship_type}</span><i aria-hidden="true">→</i>{relationship.details?.process_name&&<small>{relationship.details.process_name}</small>}</div>
+        <div className="relationship-node"><small>{entityLabels[relationship.target_type]||relationship.target_type}</small><b>{labelFor(relationship.target_type,relationship.target_id,relationship)}</b></div>
+        <div className="relationship-edge-actions">{relationship.origin==="EXISTING"&&<small>Existing link</small>}{canEdit&&<button type="button" onClick={()=>remove(relationship)} disabled={busy} aria-label={`Remove ${relationshipLabels[relationship.relationship_type]||"relationship"}`}>Remove</button>}</div>
+      </article>)}</div>}
+    </section>
   </>;
 }
 
@@ -631,11 +1401,11 @@ function Discover({systems, userEmail, onDone}) {
     ["EMAIL","Email or report","A mailbox, recurring report, or regular output people read or act on."],
   ];
   const discoverStepHelp = {
-    1: "Start with the familiar place your team already uses. This anchors the discovery in real work instead of a blank technical catalog form.",
-    2: "Name the specific screen, file, folder, or report people actually use. This tells us where the business information appears in the real workflow.",
-    3: "Pick the kind of information this source is about. We are separating the system from the data so you can identify the actual business concept, not just the tool.",
-    4: "Describe the business purpose in plain language. That becomes the definition other people will rely on when they look for this information later.",
-    5: "Record where the information lives and capture the next step: decide which location should be treated as the official business source.",
+    1: "Milestone 1 · Scope: start with the familiar place your team already uses. This anchors the discovery in real work instead of a blank technical catalog form.",
+    2: "Milestone 2 · Business context: name the specific screen, file, folder, or report people actually use. This tells us where the business information appears in the real workflow.",
+    3: "Milestone 3 · Information concept: pick the kind of information this source is about. We are separating the system from the data so you can identify the actual business concept, not just the tool.",
+    4: "Milestone 4 · Business meaning: describe the business purpose in plain language. That becomes the definition other people will rely on when they look for this information later.",
+    5: "Milestone 5 · Source and validation: record where the information lives and confirm the next step so the landscape builds toward a trusted source and a real stewardship workflow.",
   };
   const starterCopy={
     SYSTEM:{heading:"What system or tool does your team use?", fieldLabel:"System or tool name", placeholder:"e.g., Sunbiz, Licensing System, SharePoint", purposeLabel:"What does your team use it to do?", purposePlaceholder:"Describe the work in ordinary language. For example: Register businesses and maintain their filing history.", interactionLabel:"What do you interact with in {systemName}?", interactionPlaceholder:"e.g., Corporate Filing Search screen", interactionHelp:"Think about the specific screen, page, report, or record set people use to do the work."},
@@ -646,7 +1416,21 @@ function Discover({systems, userEmail, onDone}) {
 
   return <><h1>Discover Your Information</h1>
     <p className="lead">You do not need to know data-governance terminology. Start with the system, screen, file, folder, email, document, or report you already use. We will help identify the business information inside it.</p>
-    <div className="stepper">{[1,2,3,4,5].map(n=><div key={n} className={step>=n?"step on":"step"}>{n}</div>)}</div>
+    <div className="ground-zero-roadmap discover-roadmap">
+      {[
+        {title:"Scope", body:"Define the business area and starting point."},
+        {title:"Business context", body:"Name the real work and working source."},
+        {title:"Information concept", body:"Identify the business information itself."},
+        {title:"Business meaning", body:"Describe why the information matters."},
+        {title:"Source & validation", body:"Record the location and next step."},
+      ].map((item,index)=><div key={item.title} className={step >= index + 1 ? "ground-zero-roadmap-item active" : "ground-zero-roadmap-item"}>
+        <span>{index + 1}</span>
+        <div>
+          <b>{item.title}</b>
+          <small>{item.body}</small>
+        </div>
+      </div>)}
+    </div>
     <div className="education strong"><b>What to do next</b><p>{discoverStepHelp[step] || "Keep moving through the guided steps until the item is recorded and ready for stewardship."}</p></div>
 
     {step===1&&<section className="panel discover-guide">
@@ -716,7 +1500,11 @@ function Discover({systems, userEmail, onDone}) {
     </section>}
 
     {step===5&&createdAsset&&<section className="panel discover-guide">
-      {completedResource?<div className="completion-state"><div className="completion-mark">✓</div><div><div className="eyebrow">Discovery recorded</div><h2>You identified where this information lives.</h2><p><b>{completedResource.assetName}</b> is connected to <b>{completedResource.resourceName}</b>. This is the start of a governed information record, not the final description. The next useful steps are to confirm the official source, define the business meaning, and assess whether the information can be trusted.</p><div className="education strong"><b>Next steps</b><p>Open the information details page and complete the items marked “needs attention.” Those actions determine how confidently the organization can use and share this information.</p></div><div className="button-row"><button className="primary" onClick={()=>onDone(createdAsset.asset.asset_id)}>Continue to information details</button></div></div></div>:<>
+      {completedResource?<div className="completion-state"><div className="completion-mark">✓</div><div><div className="eyebrow">Discovery recorded</div><h2>You identified where this information lives.</h2><p><b>{completedResource.assetName}</b> is connected to <b>{completedResource.resourceName}</b>. This is the start of a governed information record, not the final description. The next useful steps are to confirm the official source, define the business meaning, and assess whether the information can be trusted.</p><div className="next-milestones">
+        <div className="next-milestone"><span>1</span><div><b>Confirm the official source</b><small>Decide which location the organization should rely on as the trusted source.</small></div></div>
+        <div className="next-milestone"><span>2</span><div><b>Clarify the business meaning</b><small>Describe what the information is for and who it supports.</small></div></div>
+        <div className="next-milestone"><span>3</span><div><b>Review trust and readiness</b><small>Check quality findings and determine whether the information is ready to share.</small></div></div>
+      </div><div className="education strong"><b>Next steps</b><p>Open the information details page and complete the items marked “needs attention.” Those actions determine how confidently the organization can use and share this information.</p></div><div className="button-row"><button className="primary" onClick={()=>onDone(createdAsset.asset.asset_id)}>Continue to information details</button></div></div></div>:<>
       <div className="eyebrow">Step 5 · Record where the information lives</div>
       <h2>Where did you find {createdAsset.asset.name}?</h2>
       <p className="lead">You have identified the business information. Now record the screen, file, folder, document, report, database, or interface that represents it.</p>
@@ -860,6 +1648,26 @@ function InformationOverview({asset,tasks,setTab,setGuidedTask,setSelectedQualit
       <div className="completion-mark">✓</div>
       <div><div className="eyebrow">Current status</div><h2>No immediate stewardship work needs your attention.</h2><p>Use the status below to review the information or make updates when something changes.</p></div>
     </section>}
+
+    <section className="panel">
+      <div className="eyebrow">Next milestones</div>
+      <h2>Keep moving from discovery into stewardship</h2>
+      <p className="lead">Once the landscape record exists, the work gets more specific: confirm the source, describe the business meaning, and review whether the information can be trusted.</p>
+      <div className="next-milestones">
+        <button type="button" className="next-milestone" onClick={()=>setTab("Where It Lives")}>
+          <span>1</span>
+          <div><b>Confirm the official source</b><small>Decide which location the organization should rely on when versions differ.</small></div>
+        </button>
+        <button type="button" className="next-milestone" onClick={()=>setTab("Help Others Understand It")}>
+          <span>2</span>
+          <div><b>Clarify business meaning</b><small>Describe what the information helps the team do and who it supports.</small></div>
+        </button>
+        <button type="button" className="next-milestone" onClick={()=>setTab("Can This Information Be Trusted?")}>
+          <span>3</span>
+          <div><b>Review trust and readiness</b><small>Check quality findings and stewardship readiness before publication.</small></div>
+        </button>
+      </div>
+    </section>
 
     <section className="panel">
       <div className="task-head">
@@ -1524,7 +2332,15 @@ function GovernanceGuide({asset,gov,setGov,userEmail,doAction,guidedTask,setGuid
 
   async function saveGovernance(patch,message){
     const saved=await doAction(
-      ()=>api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(patch)}),
+      async()=>{
+        await api(`/assets/${a.asset_id}/governance`,userEmail,{method:"PATCH",body:JSON.stringify(patch)});
+        // Readiness tasks often close automatically when the asset is refreshed,
+        // but review follow-ups are explicit work items. Close the task that
+        // launched this wizard after its decision has been persisted.
+        if(guidedTask?.id){
+          await api(`/tasks/${guidedTask.id}/complete`,userEmail,{method:"POST",body:JSON.stringify({})});
+        }
+      },
       message
     );
     if(!saved) return;
@@ -2216,4 +3032,3 @@ function EmptyState({title="Nothing needs attention right now.",text=null}){
 }
 
 createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
-

@@ -21,7 +21,7 @@ git push
 | `backend` | `pytest` against SQLite |
 | `backend-postgres` | `pytest` against PostgreSQL 16, because the timezone defect only reproduced on SQLite |
 | `audit` | `pip-audit` on the Python pins and `npm audit` on the lockfile |
-| `frontend` | `npm ci` and `vite build` from the lockfile |
+| `frontend` | `npm ci`, the Vite production build, and the isolated Chromium Ground Zero product journey |
 | `images` | validates the production compose file and builds both container images |
 
 The test suite had been failing for four released versions before this was

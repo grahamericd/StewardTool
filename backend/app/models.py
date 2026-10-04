@@ -42,6 +42,136 @@ class Organization(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
+class BusinessUnit(Base):
+    __tablename__ = "business_units"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_business_unit_org_name"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit_type: Mapped[str] = mapped_column(String(40), default="DEPARTMENT", nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class BusinessFunction(Base):
+    __tablename__ = "business_functions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    purpose: Mapped[str | None] = mapped_column(Text)
+    owner: Mapped[str | None] = mapped_column(String(255))
+    parent_function_id: Mapped[int | None] = mapped_column(ForeignKey("business_functions.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class BusinessFunctionUnit(Base):
+    __tablename__ = "business_function_units"
+    __table_args__ = (UniqueConstraint("organization_id", "function_id", "unit_id", name="uq_business_function_unit"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    function_id: Mapped[int] = mapped_column(ForeignKey("business_functions.id", ondelete="CASCADE"), nullable=False)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("business_units.id", ondelete="CASCADE"), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class BusinessConcept(Base):
+    __tablename__ = "business_concepts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(120))
+    definition: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="PROPOSED", nullable=False)
+    owner: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class BusinessFlow(Base):
+    __tablename__ = "business_flows"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    trigger: Mapped[str | None] = mapped_column(Text)
+    frequency: Mapped[str | None] = mapped_column(String(80))
+    source_function_id: Mapped[int | None] = mapped_column(ForeignKey("business_functions.id", ondelete="SET NULL"))
+    target_function_id: Mapped[int | None] = mapped_column(ForeignKey("business_functions.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class LandscapeSystem(Base):
+    __tablename__ = "landscape_systems"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    business_purpose: Mapped[str | None] = mapped_column(Text)
+    vendor: Mapped[str | None] = mapped_column(String(255))
+    system_owner: Mapped[str | None] = mapped_column(String(255))
+    lifecycle_status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class DiscoverySession(Base):
+    __tablename__ = "discovery_sessions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    context_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class LandscapeEvidence(Base):
+    __tablename__ = "landscape_evidence"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sessions.id", ondelete="SET NULL"))
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_id: Mapped[int | None] = mapped_column(Integer)
+    evidence_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSON)
+    source: Mapped[str] = mapped_column(String(80), default="USER", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class LandscapeAssertion(Base):
+    __tablename__ = "landscape_assertions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sessions.id", ondelete="SET NULL"))
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_id: Mapped[int | None] = mapped_column(Integer)
+    assertion_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(40), default="PROPOSED", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class AppUser(Base):
     __tablename__ = "app_users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -87,6 +217,57 @@ class CatalogSystem(Base):
     vendor: Mapped[str | None] = mapped_column(String(255))
     system_owner: Mapped[str | None] = mapped_column(String(255))
     lifecycle_status: Mapped[str] = mapped_column(String(40), default="ACTIVE", nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class SystemInventoryDetail(Base):
+    __tablename__ = "system_inventory_details"
+    __table_args__ = (UniqueConstraint("organization_id", "system_id", name="uq_system_inventory_org_system"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    system_id: Mapped[int] = mapped_column(ForeignKey("catalog_systems.id", ondelete="CASCADE"), nullable=False)
+    system_type: Mapped[str] = mapped_column(String(40), default="UNKNOWN", nullable=False)
+    knowledge_status: Mapped[str] = mapped_column(String(40), default="UNCERTAIN", nullable=False)
+    known_details: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class LandscapeRelationship(Base):
+    __tablename__ = "landscape_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "source_type",
+            "source_id",
+            "target_type",
+            "target_id",
+            "relationship_type",
+            name="uq_landscape_relationship_edge",
+        ),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[int | None] = mapped_column(Integer)
+    relationship_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class LandscapeWorkspaceDraft(Base):
+    __tablename__ = "landscape_workspace_drafts"
+    __table_args__ = (UniqueConstraint("organization_id", name="uq_landscape_workspace_draft_org"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    draft_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    revisions: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("app_users.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
@@ -19,6 +19,204 @@ class SystemCreate(BaseModel):
     description: LongText | None = None
     vendor: ShortText | None = None
     system_owner: ShortText | None = None
+
+
+SystemInventoryType = Literal["APPLICATION", "REPOSITORY", "REPORTING_TOOL", "INTEGRATION", "EXTERNAL_SYSTEM", "OTHER", "UNKNOWN"]
+SystemKnowledgeStatus = Literal["CONFIRMED", "PARTIAL", "UNCERTAIN"]
+RelationshipEntityType = Literal["BUSINESS_FUNCTION", "BUSINESS_CONCEPT", "BUSINESS_PROCESS", "SYSTEM", "RESOURCE", "ASSET", "PERSON"]
+RelationshipType = Literal["SUPPORTS", "DESCRIBES", "REPRESENTS", "OWNER", "STEWARD", "DEPENDS_ON", "PROCESS_FLOW"]
+
+
+class SystemInventoryCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    system_type: SystemInventoryType = "UNKNOWN"
+    knowledge_status: SystemKnowledgeStatus = "UNCERTAIN"
+    known_details: LongText | None = None
+    business_purpose: LongText | None = None
+    description: LongText | None = None
+    vendor: ShortText | None = None
+    system_owner: ShortText | None = None
+
+
+class SystemInventoryUpdate(BaseModel):
+    name: ShortText | None = None
+    system_type: SystemInventoryType | None = None
+    knowledge_status: SystemKnowledgeStatus | None = None
+    known_details: LongText | None = None
+    business_purpose: LongText | None = None
+    description: LongText | None = None
+    vendor: ShortText | None = None
+    system_owner: ShortText | None = None
+
+
+class LandscapeRelationshipCreate(BaseModel):
+    source_type: RelationshipEntityType
+    source_id: int = Field(gt=0)
+    target_type: RelationshipEntityType
+    target_id: int | None = Field(default=None, gt=0)
+    relationship_type: RelationshipType
+    details: dict | None = None
+    process_id: int | None = Field(default=None, gt=0)
+
+
+class LandscapeDraftUpdate(BaseModel):
+    draft_data: dict
+
+
+class LandscapeDraftCheckpoint(BaseModel):
+    label: ShortText | None = None
+
+
+class BusinessFunctionCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    description: LongText | None = None
+    purpose: LongText | None = None
+    owner: ShortText | None = None
+    parent_function_id: int | None = None
+    status: CodeText = "ACTIVE"
+
+
+class BusinessFunctionUpdate(BaseModel):
+    name: ShortText | None = None
+    description: LongText | None = None
+    purpose: LongText | None = None
+    owner: ShortText | None = None
+    parent_function_id: int | None = None
+    status: CodeText | None = None
+
+
+class BusinessUnitCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    unit_type: CodeText = "DEPARTMENT"
+    description: LongText | None = None
+    status: CodeText = "ACTIVE"
+
+
+class BusinessUnitUpdate(BaseModel):
+    name: ShortText | None = None
+    unit_type: CodeText | None = None
+    description: LongText | None = None
+    status: CodeText | None = None
+
+
+class BusinessFunctionUnitMappingCreate(BaseModel):
+    function_id: int = Field(gt=0)
+    unit_id: int = Field(gt=0)
+
+
+class BusinessFunctionUnitMappingUpdate(BaseModel):
+    function_id: int | None = Field(default=None, gt=0)
+    unit_id: int | None = Field(default=None, gt=0)
+
+
+class BusinessConceptCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    description: LongText | None = None
+    category: CodeText | None = None
+    definition: LongText | None = None
+    status: CodeText = "PROPOSED"
+    owner: ShortText | None = None
+
+
+class BusinessConceptUpdate(BaseModel):
+    name: ShortText | None = None
+    description: LongText | None = None
+    category: CodeText | None = None
+    definition: LongText | None = None
+    status: CodeText | None = None
+    owner: ShortText | None = None
+
+
+class BusinessFlowCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    description: LongText | None = None
+    trigger: LongText | None = None
+    frequency: ShortText | None = None
+    source_function_id: int | None = None
+    target_function_id: int | None = None
+    status: CodeText = "ACTIVE"
+
+
+class BusinessFlowUpdate(BaseModel):
+    name: ShortText | None = None
+    description: LongText | None = None
+    trigger: LongText | None = None
+    frequency: ShortText | None = None
+    source_function_id: int | None = None
+    target_function_id: int | None = None
+    status: CodeText | None = None
+
+
+class LandscapeSystemCreate(BaseModel):
+    name: ShortText = Field(min_length=1)
+    description: LongText | None = None
+    business_purpose: LongText | None = None
+    vendor: ShortText | None = None
+    system_owner: ShortText | None = None
+    lifecycle_status: CodeText = "ACTIVE"
+
+
+class LandscapeSystemUpdate(BaseModel):
+    name: ShortText | None = None
+    description: LongText | None = None
+    business_purpose: LongText | None = None
+    vendor: ShortText | None = None
+    system_owner: ShortText | None = None
+    lifecycle_status: CodeText | None = None
+
+
+class DiscoverySessionCreate(BaseModel):
+    title: ShortText = Field(min_length=1)
+    status: CodeText = "ACTIVE"
+    summary: LongText | None = None
+    context_snapshot: dict | None = None
+
+
+class DiscoverySessionUpdate(BaseModel):
+    title: ShortText | None = None
+    status: CodeText | None = None
+    summary: LongText | None = None
+    context_snapshot: dict | None = None
+
+
+class LandscapeEvidenceCreate(BaseModel):
+    entity_type: CodeText = Field(min_length=1)
+    entity_id: int | None = None
+    evidence_type: CodeText = Field(min_length=1)
+    summary: LongText | None = None
+    details: dict | None = None
+    source: CodeText = "USER"
+    session_id: int | None = None
+
+
+class LandscapeEvidenceUpdate(BaseModel):
+    entity_type: CodeText | None = None
+    entity_id: int | None = None
+    evidence_type: CodeText | None = None
+    summary: LongText | None = None
+    details: dict | None = None
+    source: CodeText | None = None
+    session_id: int | None = None
+
+
+class LandscapeAssertionCreate(BaseModel):
+    entity_type: CodeText = Field(min_length=1)
+    entity_id: int | None = None
+    assertion_type: CodeText = Field(min_length=1)
+    statement: LongText = Field(min_length=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: CodeText = "PROPOSED"
+    session_id: int | None = None
+
+
+class LandscapeAssertionUpdate(BaseModel):
+    entity_type: CodeText | None = None
+    entity_id: int | None = None
+    assertion_type: CodeText | None = None
+    statement: LongText | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: CodeText | None = None
+    session_id: int | None = None
 
 
 class AssetCreate(BaseModel):
